@@ -1,0 +1,12 @@
+{
+  "type": "financial_temporal",
+  "known_effects": [
+    "tendencia alcista en price",
+    "estacionalidad semanal en price/volume",
+    "cambio estructural ~ día 1800 (+12 nivel)",
+    "fraud asociado positivamente a trade_amount"
+  ],
+  "null_relations": [
+    "account_id no causa price"
+  ]
+}

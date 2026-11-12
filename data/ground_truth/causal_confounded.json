@@ -1,0 +1,15 @@
+{
+  "type": "causal_confounded",
+  "true_ate": 2.0,
+  "confounder": "SES",
+  "known_effects": [
+    "ATE verdadero treatment->outcome = 2.0",
+    "SES confunde treatment y outcome; crude bias esperado",
+    "Ajuste por SES debe acercarse a 2",
+    "noise no relacionado",
+    "mediator es mediador (no ajustar para efecto total)"
+  ],
+  "null_relations": [
+    "noise independent of treatment/outcome (aprox)"
+  ]
+}

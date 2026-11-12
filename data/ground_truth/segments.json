@@ -1,0 +1,11 @@
+{
+  "type": "segments",
+  "true_k": 3,
+  "known_effects": [
+    "3 clusters gaussianos en f1-f2",
+    "cat_true alineado a cluster"
+  ],
+  "null_relations": [
+    "f3 ruido"
+  ]
+}

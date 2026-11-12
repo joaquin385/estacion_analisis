@@ -1,0 +1,18 @@
+name: manufacturing_process
+version: "1.0.0"
+domain: operational
+columns:
+  - name: batch_id
+    role: identifier
+  - name: plant
+    role: categorical
+  - name: temperature
+    role: numeric
+    min: -50
+    max: 500
+  - name: cycle_time
+    role: numeric
+    min: 0.001
+  - name: defective
+    role: binary
+    allowed_values: ["0", "1"]

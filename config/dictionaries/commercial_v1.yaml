@@ -1,0 +1,32 @@
+name: commercial_orders
+version: "1.0.0"
+domain: commercial
+columns:
+  - name: order_id
+    role: identifier
+    dtype: int64
+    description: Identificador de pedido
+  - name: region
+    role: categorical
+    allowed_values: [Norte, Sur, Este, Oeste]
+    description: Región comercial
+  - name: channel
+    role: categorical
+    allowed_values: [online, tienda, partner]
+  - name: customer_size
+    role: numeric
+    min: 1
+    max: 10
+  - name: marketing_spend
+    role: numeric
+    min: 0
+  - name: discount
+    role: numeric
+    min: 0
+    max: 1
+  - name: revenue
+    role: numeric
+    min: 0
+  - name: units
+    role: numeric
+    min: 1

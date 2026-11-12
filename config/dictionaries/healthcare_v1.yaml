@@ -1,0 +1,28 @@
+name: healthcare_vitals
+version: "1.0.0"
+domain: healthcare
+columns:
+  - name: patient_id
+    role: identifier
+  - name: age
+    role: numeric
+    min: 0
+    max: 120
+  - name: sex
+    role: categorical
+    allowed_values: [M, F, Other, Unknown]
+  - name: sbp
+    role: numeric
+    min: 50
+    max: 250
+    unit: mmHg
+  - name: dbp
+    role: numeric
+    min: 20
+    max: 150
+    unit: mmHg
+  - name: heart_rate
+    role: numeric
+    min: 20
+    max: 250
+    unit: bpm

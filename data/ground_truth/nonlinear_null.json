@@ -1,0 +1,11 @@
+{
+  "type": "nonlinear_and_null",
+  "known_effects": [
+    "y ≈ x^2 (no lineal; pearson débil, distance/spearman más informativos)"
+  ],
+  "null_relations": [
+    "z ⊥ w",
+    "group sin efecto real sobre y",
+    "z ⊥ x"
+  ]
+}

@@ -1,0 +1,27 @@
+name: commercial
+max_missing_pct: 0.2
+max_duplicate_pct: 0.005
+max_iqr_outlier_pct: 0.05
+max_constant_cols: 0
+max_dominant_category_pct: 0.9
+forbidden_sentinel_values:
+  - -999
+  - -9999
+  - 9999
+  - NA
+  - N/A
+  - "null"
+  - "#N/A"
+required_columns: []
+non_negative_columns:
+  - revenue
+  - units
+  - price
+  - amount
+  - marketing_spend
+date_columns_must_parse: []
+id_columns_must_be_unique:
+  - order_id
+  - customer_id
+custom_notes:
+  - Montos no negativos; IDs de pedido únicos.

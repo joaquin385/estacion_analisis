@@ -1,0 +1,19 @@
+name: retail_orders
+version: "1.0.0"
+domain: commercial
+columns:
+  - name: order_id
+    role: identifier
+  - name: price
+    role: numeric
+    min: 0
+  - name: units
+    role: numeric
+    min: 1
+  - name: revenue
+    role: numeric
+    min: 0
+  - name: discount
+    role: numeric
+    min: 0
+    max: 1

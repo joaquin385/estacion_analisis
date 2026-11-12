@@ -1,0 +1,14 @@
+{
+  "type": "commercial",
+  "known_effects": [
+    "region=Norte eleva revenue",
+    "marketing_spend tiene relación no lineal (cuadrática) con revenue",
+    "customer_size confunde marketing_spend y revenue",
+    "≈40 anomalías de revenue x8",
+    "discount ~20% missing",
+    "60 filas duplicadas exactas"
+  ],
+  "null_relations": [
+    "units casi independiente de region (ruido)"
+  ]
+}

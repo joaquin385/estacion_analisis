@@ -1,0 +1,13 @@
+{
+  "type": "operational",
+  "known_effects": [
+    "plant=B mayor tasa de defectos",
+    "shift=noche eleva defectos",
+    "temperatura con efecto U (no lineal) sobre defectos",
+    "25 valores 9999 en temperature (error calidad)",
+    "cycle_time con missing"
+  ],
+  "null_relations": [
+    "operator_id ruido respecto a defective (débil/nulo)"
+  ]
+}

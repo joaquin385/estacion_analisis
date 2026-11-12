@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Tests / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local secrets / env
+.env
+.env.*
+!.env.example
+
+# Runtime outputs (reports, sessions, benchmarks)
+outputs/
+!outputs/.gitkeep
+
+# Streamlit / local caches
+.streamlit/secrets.toml
+*.log
