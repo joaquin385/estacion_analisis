@@ -16,6 +16,9 @@
 - Tras Analizar, se ocultan “Datos listos” / preview / botón en el mismo run
 - Preview sin `None` en celdas vacías; tablas avanzadas (reglas, faltantes, drift) + decimales coma
 - Informe MD/PDF: categoría/severidad en español; Sí/No en vez de True/False
+- Enteros es-AR (3.060); un solo aviso de separador/decimal; preview sin tabla duplicada
+- Perfil: tipo entero/decimal/texto; avisos/método legibles; Faltantes Campo/Valor + efecto en unidades
+- Informe: métodos en español claro (Spearman/FDR entre paréntesis)
 
 ## v0.6.1 — UX (2026-11-12)
 

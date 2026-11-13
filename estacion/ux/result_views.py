@@ -9,6 +9,7 @@ import streamlit as st
 
 from estacion.ux.presentation import (
     format_number,
+    format_int_es,
     format_p_value,
     format_p_clause,
     format_pct,
@@ -75,11 +76,13 @@ FIELD_LABELS_ES = {
     "n_observed_vars": "Variables observadas",
     "missing_col": "Columna con vacíos",
     "predictor": "Predictor",
-    "effect": "Efecto / diferencia",
+    "effect": "Efecto (diff. de medias)",
     "missing_rate_target": "% vacíos (objetivo)",
     "reason": "Motivo",
     "campo": "Campo",
     "valor": "Valor",
+    "Campo": "Campo",
+    "Valor": "Valor",
     "df": "Grados de libertad",
     "reject_mcar_alpha05": "Se rechaza al azar (α=0,05)",
     "n_patterns_used": "Patrones usados",
@@ -128,6 +131,70 @@ TYPE_LABELS_ES = {
     "other": "Otra",
 }
 
+DTYPE_LABELS_ES = {
+    "int64": "entero",
+    "int32": "entero",
+    "int16": "entero",
+    "int8": "entero",
+    "Int64": "entero",
+    "Int32": "entero",
+    "uint64": "entero",
+    "uint32": "entero",
+    "float64": "decimal",
+    "float32": "decimal",
+    "Float64": "decimal",
+    "Float32": "decimal",
+    "object": "texto",
+    "string": "texto",
+    "str": "texto",
+    "bool": "booleano",
+    "boolean": "booleano",
+    "bool64": "booleano",
+    "category": "categoría",
+    "datetime64[ns]": "fecha/hora",
+    "datetime64": "fecha/hora",
+    "timedelta64[ns]": "duración",
+}
+
+
+def dtype_label_es(dtype: Any) -> str:
+    s = str(dtype)
+    if s in DTYPE_LABELS_ES:
+        return DTYPE_LABELS_ES[s]
+    sl = s.lower()
+    if "datetime" in sl:
+        return "fecha/hora"
+    if "timedelta" in sl:
+        return "duración"
+    if "float" in sl:
+        return "decimal"
+    if "int" in sl or "uint" in sl:
+        return "entero"
+    if "bool" in sl:
+        return "booleano"
+    if "object" in sl or "string" in sl or sl == "str":
+        return "texto"
+    if "category" in sl:
+        return "categoría"
+    return s
+
+
+def reason_plain_es(text: Any) -> str:
+    s = str(text) if text is not None else ""
+    if not s:
+        return "—"
+    replacements = (
+        ("missing parcial", "faltantes en parte de las filas"),
+        ("missingness", "patrón de vacíos"),
+        ("Se necesitan ≥2 columnas numéricas con missing parcial",
+         "Se necesitan ≥2 columnas numéricas con faltantes en parte de las filas"),
+        ("Un solo patrón de missingness", "Un solo patrón de vacíos"),
+    )
+    out = s
+    for a, b in replacements:
+        out = out.replace(a, b)
+    return out
+
 ROLE_LABELS_ES = {
     "identifier": "Identificador",
     "datetime": "Fecha/hora",
@@ -163,17 +230,17 @@ def dict_to_table(d: dict[str, Any], exclude: set[str] | None = None) -> pd.Data
             continue  # no mostrar "Ok True"
         label = _label_field(str(k))
         if k in {"pvalue", "p_value", "p_fdr", "p_raw"}:
-            rows.append({"campo": label, "valor": format_p_value(v if isinstance(v, (int, float)) else None)})
+            rows.append({"Campo": label, "Valor": format_p_value(v if isinstance(v, (int, float)) else None)})
         elif k in {"method"}:
-            rows.append({"campo": label, "valor": METHOD_LABELS_ES.get(str(v), v)})
+            rows.append({"Campo": label, "Valor": METHOD_LABELS_ES.get(str(v), v)})
         elif k in {"rule"}:
-            rows.append({"campo": label, "valor": RULE_LABELS_ES.get(str(v), v)})
+            rows.append({"Campo": label, "Valor": RULE_LABELS_ES.get(str(v), v)})
         elif k in {"severity"}:
-            rows.append({"campo": label, "valor": SEVERITY_VALUE_ES.get(str(v), v)})
+            rows.append({"Campo": label, "Valor": SEVERITY_VALUE_ES.get(str(v), v)})
         elif k in {"reason"}:
-            rows.append({"campo": "Motivo", "valor": display_value(v)})
+            rows.append({"Campo": "Motivo", "Valor": reason_plain_es(v)})
         else:
-            rows.append({"campo": label, "valor": _fmt_val(v)})
+            rows.append({"Campo": label, "Valor": _fmt_val(v)})
     return pd.DataFrame(rows)
 
 
@@ -188,8 +255,8 @@ def rename_df_columns_es(df: pd.DataFrame) -> pd.DataFrame:
         ol = str(original).lower()
         if col in {"Método", "method", "Method"} or cl == "método":
             out[col] = out[col].map(lambda x: METHOD_LABELS_ES.get(str(x), x))
-        if col in {"Tipo", "type", "Type"} or cl == "tipo":
-            out[col] = out[col].map(lambda x: TYPE_LABELS_ES.get(str(x), x))
+        if col in {"Tipo", "type", "Type"} or cl == "tipo" or ol == "type":
+            out[col] = out[col].map(lambda x: TYPE_LABELS_ES.get(str(x)) or dtype_label_es(x))
         if col in {"Regla", "rule"} or ol == "rule":
             out[col] = out[col].map(lambda x: RULE_LABELS_ES.get(str(x), x))
         if col in {"Severidad", "severity"} or ol == "severity":
@@ -209,11 +276,31 @@ def rename_df_columns_es(df: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].map(
                 lambda x: format_pct(float(x), digits=1) if isinstance(x, (int, float)) else display_value(x)
             )
-        if ol in {"value", "threshold", "effect"} or col in {"Valor", "Umbral", "Efecto / diferencia"}:
+        # Umbrales/valores de reglas de calidad (keys originales), no la columna genérica "Valor"
+        if ol in {"value", "threshold"}:
             out[col] = out[col].map(
                 lambda x: (
                     format_pct(float(x), digits=1)
                     if isinstance(x, (int, float)) and abs(float(x)) <= 1
+                    else display_value(x)
+                )
+            )
+        # Efecto MAR: diferencia de medias (unidades de la columna predictora), no %
+        if ol == "effect" or col.startswith("Efecto"):
+            out[col] = out[col].map(
+                lambda x: format_number(float(x), digits=2) if isinstance(x, (int, float)) else display_value(x)
+            )
+        if ol in {"n", "n_missing", "n_observed", "statistic", "df", "n_unique"} or col in {
+            "N",
+            "Nº vacíos",
+            "N observado",
+            "Estadístico",
+            "Únicos",
+        }:
+            out[col] = out[col].map(
+                lambda x: (
+                    format_int_es(x)
+                    if isinstance(x, (int, float)) and not isinstance(x, bool) and float(x).is_integer()
                     else display_value(x)
                 )
             )

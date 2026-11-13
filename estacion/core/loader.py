@@ -52,15 +52,15 @@ def _sniff_csv_params(sample: str) -> dict:
     if sep == ";" and comma_nums >= max(1, dot_nums):
         decimal = ","
         warnings.append(
-            "Detectamos separador ';' y decimal ',' (formato típico de Excel en español)."
+            "Detectamos separador de columnas ';' y decimal ',' "
+            "(formato típico de Excel en español)."
         )
     elif sep == "," and comma_nums > dot_nums * 2 and comma_nums >= 3:
         # raro pero posible
         decimal = ","
         warnings.append("Detectamos muchos números con coma decimal.")
-
-    if sep != ",":
-        warnings.append(f"Separador de columnas detectado: '{sep}'.")
+    elif sep != ",":
+        warnings.append(f"Detectamos separador de columnas '{sep}'.")
 
     return {"sep": sep, "decimal": decimal, "warnings": warnings}
 

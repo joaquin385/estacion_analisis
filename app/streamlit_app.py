@@ -541,12 +541,20 @@ def main():
         st.session_state.pop("repair_uploaded_files", None)
         st.session_state.pop("_prefer_loaded_upload", None)
 
+    auto_once = st.session_state.pop("_auto_analyze_once", False)
+    run_analyze_now = bool(
+        run_btn or auto_once or st.session_state.pop("_run_analyze", False)
+    )
+    show_analyze_prompt = not _analysis_ready(selected, quality_domain) and not run_analyze_now
+    # Evitar tabla duplicada: expander (mensajes) + preview bajo Analizar.
+    preview_table_in_expander = not (from_upload and show_analyze_prompt and not bad_parse)
+
     if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
         with st.expander(
             "Vista previa de la carga",
             expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1,
         ):
-            render_load_preview(df, meta)
+            render_load_preview(df, meta, show_table=preview_table_in_expander)
 
     if from_upload or bad_parse:
         c_clear, c_up = st.columns([1, 2])
@@ -574,15 +582,10 @@ def main():
             st.write(graph.get("note"))
             st.dataframe(pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(), width="stretch")
 
-    auto_once = st.session_state.pop("_auto_analyze_once", False)
-    run_analyze_now = bool(
-        run_btn or auto_once or st.session_state.pop("_run_analyze", False)
-    )
-
     def _on_main_analyze() -> None:
         st.session_state["_run_analyze"] = True
 
-    if not _analysis_ready(selected, quality_domain) and not run_analyze_now:
+    if show_analyze_prompt:
         st.info("Datos listos. Pulsá **Analizar** para generar el resumen.")
         st.button(
             "Analizar",
@@ -619,10 +622,12 @@ def main():
         tabs = st.tabs(["Resumen", "Explorar tus datos", "Informe"])
         with tabs[0]:
             st.subheader("Resumen")
+            from estacion.ux.presentation import format_int_es
+
             c1, c2, c3 = st.columns(3)
-            c1.metric("Filas", f"{profile.n_rows:,}")
-            c2.metric("Columnas", profile.n_cols)
-            c3.metric("Hallazgos", len(findings))
+            c1.metric("Filas", format_int_es(profile.n_rows))
+            c2.metric("Columnas", format_int_es(profile.n_cols))
+            c3.metric("Hallazgos", format_int_es(len(findings)))
             empty = not findings
             if empty:
                 st.info(
@@ -671,16 +676,23 @@ def main():
     )
 
     with tabs[0]:
+        from estacion.ux.presentation import format_int_es
+
         st.caption("¿Para qué sirve? Ver el resumen de hallazgos en lenguaje simple.")
         st.subheader("Descubrimiento")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Filas", f"{profile.n_rows:,}")
-        c2.metric("Columnas", profile.n_cols)
-        c3.metric("Hallazgos", len(findings))
+        c1.metric("Filas", format_int_es(profile.n_rows))
+        c2.metric("Columnas", format_int_es(profile.n_cols))
+        c3.metric("Hallazgos", format_int_es(len(findings)))
         fdr = artifacts.get("fdr_global") or {}
+        n_sig, n_tested = fdr.get("n_significant"), fdr.get("n_tested")
         c4.metric(
             "Hallazgos confiables",
-            f"{fdr.get('n_significant', '—')}/{fdr.get('n_tested', '—')}",
+            (
+                f"{format_int_es(n_sig)}/{format_int_es(n_tested)}"
+                if n_sig is not None and n_tested is not None
+                else "—"
+            ),
             help="Tras corregir por muchas pruebas (FDR).",
         )
         if not findings:
@@ -693,30 +705,47 @@ def main():
             render_finding_cards(findings, narratives, show_empty=False)
 
     with tabs[1]:
+        from estacion.ux.presentation import format_int_es, format_pct
         from estacion.ux.result_views import (
             ROLE_LABELS_ES,
             descriptive_table_es,
+            dtype_label_es,
             humanize_granularity_notes,
         )
 
         st.caption("¿Para qué sirve? Ficha de cada columna y reglas de calidad editables.")
         st.subheader("Perfil del dataset")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Columna": v.name,
-                        "Tipo": v.dtype,
-                        "Rol": ROLE_LABELS_ES.get(v.role.value, v.role.value),
-                        "% vacíos": round(v.missing_pct * 100, 1),
-                        "Únicos": v.n_unique,
-                        "Avisos": "; ".join(v.warnings) or "—",
-                    }
-                    for v in profile.variables
-                ]
-            ),
-            width="stretch",
+        perfil_df = pd.DataFrame(
+            [
+                {
+                    "Columna": v.name,
+                    "Tipo": dtype_label_es(v.dtype),
+                    "Rol": ROLE_LABELS_ES.get(v.role.value, v.role.value),
+                    "% vacíos": format_pct(v.missing_pct, digits=1),
+                    "Únicos": format_int_es(v.n_unique),
+                    "Avisos": "; ".join(v.warnings) or "—",
+                }
+                for v in profile.variables
+            ]
         )
+        st.dataframe(
+            perfil_df,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Columna": st.column_config.TextColumn("Columna", width="medium"),
+                "Tipo": st.column_config.TextColumn("Tipo", width="small"),
+                "Rol": st.column_config.TextColumn("Rol", width="small"),
+                "% vacíos": st.column_config.TextColumn("% vacíos", width="small"),
+                "Únicos": st.column_config.TextColumn("Únicos", width="small"),
+                "Avisos": st.column_config.TextColumn("Avisos", width="large"),
+            },
+        )
+        long_avisos = [(r["Columna"], r["Avisos"]) for _, r in perfil_df.iterrows() if r["Avisos"] not in {"—", ""}]
+        if long_avisos:
+            with st.expander("Avisos completos por columna", expanded=False):
+                for col_name, avisos in long_avisos:
+                    st.markdown(f"**{col_name}:** {avisos}")
         notes = humanize_granularity_notes(profile.granularity_notes)
         if notes:
             st.markdown("**Granularidad:**")
@@ -726,11 +755,21 @@ def main():
             st.write("**Granularidad:** —")
         if profile.numeric_columns:
             st.write("**Descriptivos**")
+            desc_df = descriptive_table_es(descriptive_report(df, profile.numeric_columns))
+            method_cfg = {}
+            if "Método" in desc_df.columns:
+                method_cfg["Método"] = st.column_config.TextColumn("Método", width="large")
             st.dataframe(
-                descriptive_table_es(descriptive_report(df, profile.numeric_columns)),
+                desc_df,
                 width="stretch",
                 hide_index=True,
+                column_config=method_cfg or None,
             )
+            if "Método" in desc_df.columns:
+                with st.expander("Métodos de los descriptivos (texto completo)", expanded=False):
+                    for _, row in desc_df.iterrows():
+                        var = row.get("Variable", row.get("variable", "—"))
+                        st.markdown(f"**{var}:** {row.get('Método', '—')}")
 
         st.subheader("Editor de reglas de calidad")
         base = load_rules(domain=quality_domain)

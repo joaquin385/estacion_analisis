@@ -32,10 +32,20 @@ def generate_markdown_report(
     lines.append("")
     lines.append("## Resumen ejecutivo")
     lines.append("")
+    try:
+        from estacion.ux.presentation import format_int_es
+
+        n_rows_txt = format_int_es(profile.n_rows)
+        n_cols_txt = format_int_es(profile.n_cols)
+        n_find_txt = format_int_es(len(findings))
+    except Exception:
+        n_rows_txt = str(profile.n_rows)
+        n_cols_txt = str(profile.n_cols)
+        n_find_txt = str(len(findings))
     lines.append(
-        f"Dataset con **{profile.n_rows:,}** filas y **{profile.n_cols}** columnas "
+        f"Dataset con **{n_rows_txt}** filas y **{n_cols_txt}** columnas "
         f"({profile.memory_mb} MB). "
-        f"Se priorizaron **{len(findings)}** hallazgos automáticos."
+        f"Se priorizaron **{n_find_txt}** hallazgos automáticos."
     )
     try:
         from estacion.ux.presentation import (
@@ -113,13 +123,14 @@ def generate_markdown_report(
             CATEGORY_LABELS_ES,
             SEVERITY_LABELS_ES,
             bool_es,
+            method_plain_es,
         )
 
         cat = CATEGORY_LABELS_ES.get(f.category.value, f.category.value)
         sev = SEVERITY_LABELS_ES.get(f.severity.value, f.severity.value)
         lines.append(f"- **Qué se observó:** {obs}")
         lines.append(f"- **Magnitud:** {mag}")
-        lines.append(f"- **Método:** {f.method}")
+        lines.append(f"- **Método:** {method_plain_es(f.method)}")
         lines.append(f"- **Categoría / severidad:** {cat} / {sev}")
         if f.statistically_significant is not None:
             lines.append(f"- **Estadísticamente significativo:** {bool_es(f.statistically_significant)}")

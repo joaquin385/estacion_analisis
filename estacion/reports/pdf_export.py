@@ -22,6 +22,15 @@ def _wrap(ax, title: str):
     ax.grid(True, alpha=0.25)
 
 
+def _fmt_int(n: Any) -> str:
+    try:
+        from estacion.ux.presentation import format_int_es
+
+        return format_int_es(n)
+    except Exception:
+        return str(n)
+
+
 def generate_pdf_report(
     df: pd.DataFrame,
     profile: DatasetProfile,
@@ -45,9 +54,9 @@ def generate_pdf_report(
             f"Informe: {profile.name}",
             f"Generado: {datetime.now().isoformat(timespec='seconds')}",
             "",
-            f"Filas: {profile.n_rows:,}   Columnas: {profile.n_cols}   Memoria: {profile.memory_mb} MB",
-            f"Duplicados: {profile.duplicate_rows} ({profile.duplicate_pct:.1%})",
-            f"Hallazgos priorizados: {len(findings)}",
+            f"Filas: {_fmt_int(profile.n_rows)}   Columnas: {_fmt_int(profile.n_cols)}   Memoria: {profile.memory_mb} MB",
+            f"Duplicados: {_fmt_int(profile.duplicate_rows)} ({profile.duplicate_pct:.1%})",
+            f"Hallazgos priorizados: {_fmt_int(len(findings))}",
             "",
             "Resumen en lenguaje simple:",
         ]
@@ -149,6 +158,7 @@ def generate_pdf_report(
                     CATEGORY_LABELS_ES,
                     SEVERITY_LABELS_ES,
                     bool_es,
+                    method_plain_es,
                 )
 
                 h = humanize_finding(f)
@@ -158,6 +168,7 @@ def generate_pdf_report(
                 ev_lines = [f"- {k}: {v}" for k, v in evidence_pairs_plain(f.evidence)]
                 cat = CATEGORY_LABELS_ES.get(f.category.value, f.category.value)
                 sev = SEVERITY_LABELS_ES.get(f.severity.value, f.severity.value)
+                method_txt = method_plain_es(f.method)
                 sig_line = None
                 if f.statistically_significant is not None:
                     sig_line = f"Estadísticamente significativo: {bool_es(f.statistically_significant)}"
@@ -171,13 +182,14 @@ def generate_pdf_report(
                 ev_lines = []
                 cat = f.category.value
                 sev = f.severity.value
+                method_txt = str(f.method)
                 sig_line = None
                 prac_line = None
             text = [
                 title,
                 f"Categoría: {cat} | Severidad: {sev} | Score: {f.score:.0f}",
                 f"Magnitud: {mag}",
-                f"Método: {f.method}",
+                f"Método: {method_txt}",
                 *([sig_line] if sig_line else []),
                 *([prac_line] if prac_line else []),
                 "",

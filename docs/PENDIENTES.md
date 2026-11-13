@@ -15,6 +15,7 @@ Según `prompt_para_cursor.md` / informe UX v2:
 9. Modo avanzado traducido (pestañas, encabezados, placeholders)
 10. Follow-up post-PR#1: Analizar en main, quitar archivo, parse inválido, informe/causal/tablas pulidos
 11. Follow-up retest 1391316: repair tras inválido; ocultar Datos listos al Analizar; preview —; tablas ES + coma; informe Relación/Crítico + Sí/No
+12. Polish final: enteros es-AR; aviso carga único; Perfil/Faltantes; métodos informe en español claro
 
 ## Completado en v0.6.1 (UX — informe completo)
 

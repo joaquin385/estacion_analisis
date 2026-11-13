@@ -52,24 +52,67 @@ SUMMARY_FORBIDDEN = (
 )
 
 
+def format_int_es(n: Any) -> str:
+    """Entero con separador de miles punto (es-AR): 3060 → 3.060."""
+    if n is None:
+        return "—"
+    try:
+        if isinstance(n, bool):
+            return bool_es(n)
+        v = int(n)
+    except Exception:
+        return str(n)
+    neg = v < 0
+    body = f"{abs(v):,}".replace(",", ".")
+    return f"-{body}" if neg else body
+
+
+def _format_es_float(v: float, decimals: int) -> str:
+    """Float es-AR: miles con punto, decimales con coma."""
+    neg = v < 0
+    v = abs(float(v))
+    if decimals <= 0:
+        body = f"{int(round(v)):,}".replace(",", ".")
+    else:
+        raw = f"{v:,.{decimals}f}"  # 1,234.56
+        if "." in raw:
+            whole, frac = raw.rsplit(".", 1)
+        else:
+            whole, frac = raw, "0" * decimals
+        body = f"{whole.replace(',', '.')},{frac}"
+    return f"-{body}" if neg else body
+
+
 def format_number(x: Any, digits: int = 2) -> str:
-    """Número con decimal coma (es-AR). Miles con espacio fino."""
+    """Número es-AR: miles con punto, decimales con coma. Enteros sin ,0."""
     if x is None:
         return "—"
+    if isinstance(x, bool):
+        return bool_es(x)
     try:
         if isinstance(x, float) and (math.isnan(x) or math.isinf(x)):
             return "—"
+        # enteros / numpy int
+        if isinstance(x, int) or (hasattr(x, "dtype") and str(getattr(x, "dtype", "")).startswith("int")):
+            return format_int_es(x)
         v = float(x)
     except Exception:
         s = str(x)
         if s.lower() in {"none", "nan", "null"}:
             return "—"
         return s
+    if abs(v - round(v)) < 1e-9:
+        return format_int_es(int(round(v)))
     if abs(v) >= 1000:
-        return f"{v:,.1f}".replace(",", " ").replace(".", ",")
+        raw = _format_es_float(v, max(digits, 1))
+        # quitar ceros sobrantes tras la coma (759.773,50 → 759.773,5)
+        if "," in raw:
+            whole, frac = raw.rsplit(",", 1)
+            frac = frac.rstrip("0")
+            raw = f"{whole},{frac}" if frac else whole
+        return raw
     d = max(digits, 2) if abs(v) < 10 else digits
     raw = f"{v:.{d}f}"
-    # quitar ceros sobrantes pero conservar al menos un decimal si digits>=2 y |v|<10
     if abs(v) < 10 and d >= 2:
         raw = raw.rstrip("0").rstrip(".")
         if "." not in raw and digits >= 1:
@@ -143,11 +186,12 @@ def format_p_clause(p: float | None) -> str:
 
 
 def format_n_rows(n: int) -> str:
-    return "1 fila" if int(n) == 1 else f"{int(n):,} filas".replace(",", " ")
+    n = int(n)
+    return "1 fila" if n == 1 else f"{format_int_es(n)} filas"
 
 
 def display_value(x: Any, *, pct_if_unit: bool = False) -> Any:
-    """None/nan → '—'; redondea floats con coma decimal."""
+    """None/nan → '—'; enteros/floats en es-AR."""
     if x is None:
         return "—"
     try:
@@ -157,12 +201,20 @@ def display_value(x: Any, *, pct_if_unit: bool = False) -> Any:
         pass
     if isinstance(x, bool):
         return bool_es(x)
+    if isinstance(x, int) and not isinstance(x, bool):
+        return format_int_es(x)
     if isinstance(x, float):
         if math.isnan(x) or math.isinf(x):
             return "—"
         if pct_if_unit and abs(x) <= 1.0:
             return format_pct(x, digits=1)
         return format_number(x, digits=4 if abs(x) < 1 else 2)
+    # numpy enteros
+    try:
+        if hasattr(x, "item") and type(x).__name__ in {"int64", "int32", "int16", "uint64"}:
+            return format_int_es(int(x))
+    except Exception:
+        pass
     if isinstance(x, str) and x.lower() in {"none", "nan", "null"}:
         return "—"
     return x
@@ -198,8 +250,15 @@ def dataframe_for_display(
                 return display_value(v, pct_if_unit=p)
             if p and isinstance(v, (int, float)) and not isinstance(v, bool):
                 return format_pct(float(v), digits=1)
+            if isinstance(v, int) and not isinstance(v, bool):
+                return format_int_es(v)
             if isinstance(v, float):
                 return format_number(v, digits=4 if abs(v) < 1 else 2)
+            try:
+                if hasattr(v, "item") and "int" in type(v).__name__.lower():
+                    return format_int_es(int(v))
+            except Exception:
+                pass
             return v
 
         out[col] = out[col].map(_cell)
@@ -699,6 +758,54 @@ def _human_actions(f: Finding) -> list[str]:
     for a in (f.follow_up or [])[:2]:
         cleaned.append(_strip_jargon(a))
     return cleaned or ["Revisar en la pestaña Explorar."]
+
+
+def method_plain_es(method: str | None) -> str:
+    """Método de hallazgo en español claro; nombre técnico entre paréntesis si aporta."""
+    if method is None or str(method).strip() == "":
+        return "—"
+    t = str(method).strip()
+    exact = {
+        "Spearman + FDR-BH": (
+            "Correlación por rangos con corrección por muchas pruebas (Spearman + FDR-BH)"
+        ),
+        "Spearman + FDR-BH + distance correlation": (
+            "Correlación por rangos y dependencia no lineal, "
+            "con corrección por muchas pruebas (Spearman + FDR-BH + distance correlation)"
+        ),
+        "IsolationForest": "Detección de filas raras (IsolationForest)",
+        "pandas.DataFrame.duplicated": "Detección de filas repetidas",
+        "conteo de NA": "Conteo de valores vacíos",
+        "Asimetría (skew) y percentiles": "Asimetría y percentiles",
+        "K-means grid + silhouette": "Agrupamiento automático (K-means)",
+        "K-means + silhouette; contraste jerárquico/DBSCAN": (
+            "Agrupamiento automático con contraste de métodos (K-means / DBSCAN)"
+        ),
+        "IQR 1.5": "Valores extremos por rango intercuartílico (IQR)",
+        "value_counts": "Conteo de categorías",
+        "suma agrupada / participación relativa": "Suma agrupada y participación relativa",
+        "búsqueda de corte + t-test": "Búsqueda de corte y comparación de medias",
+        "PELT L2": "Detección de cambios de nivel (PELT)",
+        "PELT_VAR": "Detección de cambios de varianza (PELT)",
+        "comparación no paramétrica entre grupos": "Comparación no paramétrica entre grupos",
+        "Little MCAR (aproximado)": "Prueba de faltantes al azar (Little MCAR, aproximado)",
+    }
+    if t in exact:
+        return exact[t]
+    if t.startswith("quality_rules"):
+        return "Reglas de calidad"
+    if t.startswith("regresión lineal sobre serie agregada"):
+        return "Tendencia por regresión lineal sobre la serie agregada"
+    # Sustituciones parciales de jerga frecuente en métodos compuestos
+    out = t
+    out = re.sub(r"\bFDR-BH\b", "corrección por muchas pruebas (FDR-BH)", out)
+    out = re.sub(r"\bFDR\b", "corrección por muchas pruebas", out)
+    out = re.sub(r"\bSpearman\b", "correlación por rangos (Spearman)", out, flags=re.I)
+    out = re.sub(r"\bresiduales\b", "diferencias del modelo", out, flags=re.I)
+    out = re.sub(r"\bcovariables\b", "otras columnas", out, flags=re.I)
+    out = re.sub(r"\bIsolationForest\b", "detección de filas raras (IsolationForest)", out)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    return out
 
 
 def _strip_jargon(text: str) -> str:

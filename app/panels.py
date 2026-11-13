@@ -156,7 +156,22 @@ def render_welcome(
         )
 
 
-def render_load_preview(df: pd.DataFrame, meta: dict[str, Any] | None) -> None:
+def _is_parse_format_note(msg: str) -> bool:
+    m = msg.lower()
+    return (
+        "separador" in m
+        or "decimal" in m
+        or "excel en español" in m
+        or "coma decimal" in m
+    )
+
+
+def render_load_preview(
+    df: pd.DataFrame,
+    meta: dict[str, Any] | None,
+    *,
+    show_table: bool = True,
+) -> None:
     meta = meta or {}
     warnings = [str(w) for w in (meta.get("warnings") or []) if w]
     bad = bool(meta.get("suspicious_parse") or (meta.get("n_cols") == 1))
@@ -171,11 +186,16 @@ def render_load_preview(df: pd.DataFrame, meta: dict[str, Any] | None) -> None:
             "Si exportaste desde Excel en español, el separador suele ser `;` y el decimal `,`."
         )
         for w in warnings:
-            if w not in bits:
+            if w not in bits and not _is_parse_format_note(w):
                 bits.append(w)
         st.error(" ".join(bits))
     else:
-        for w in warnings:
+        format_notes = [w for w in warnings if _is_parse_format_note(w)]
+        other = [w for w in warnings if not _is_parse_format_note(w)]
+        if format_notes:
+            # Un solo mensaje neutro (evitar dos yellow notes casi iguales).
+            st.info(format_notes[0])
+        for w in other:
             st.warning(w)
         if n_rows < 30:
             st.warning(
@@ -189,7 +209,8 @@ def render_load_preview(df: pd.DataFrame, meta: dict[str, Any] | None) -> None:
             + ("…" if len(cols) > 12 else "")
             + ". ¿Se ve bien?"
         )
-    st.dataframe(dataframe_for_display(df.head(8)), width="stretch")
+    if show_table:
+        st.dataframe(dataframe_for_display(df.head(8)), width="stretch")
 
 
 def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
@@ -230,7 +251,9 @@ def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
                 )
             )
             st.write(clause + extra)
-        st.write(f"**Método:** {f.method}")
+        from estacion.ux.presentation import method_plain_es
+
+        st.write(f"**Método:** {method_plain_es(f.method)}")
         st.write(f"**Magnitud:** {format_magnitude(f.magnitude, finding=f)}")
         ev = f.evidence or {}
         if isinstance(ev.get("group_means"), dict) and ev["group_means"]:

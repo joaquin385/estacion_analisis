@@ -14,13 +14,23 @@ from estacion.ux.presentation import (
     SUMMARY_FORBIDDEN,
     build_plain_summary,
     dedupe_findings,
+    format_int_es,
     format_magnitude,
     format_number,
+    format_n_rows,
     humanize_finding,
+    method_plain_es,
     sort_findings_for_humans,
     finding_track,
 )
-from estacion.ux.result_views import humanize_causal_adjusted, _extract_adjusted_coef
+from estacion.ux.result_views import (
+    humanize_causal_adjusted,
+    _extract_adjusted_coef,
+    dict_to_table,
+    dtype_label_es,
+    reason_plain_es,
+    rename_df_columns_es,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +104,17 @@ def test_format_magnitude_no_long_decimals():
     assert "0196078431372549" not in mag
     assert format_magnitude(None) == "—"
     assert format_number(None) == "—"
+
+
+def test_format_int_es_ar():
+    assert format_int_es(3060) == "3.060"
+    assert format_int_es(3) == "3"
+    assert format_n_rows(3060) == "3.060 filas"
+    assert format_number(3060) == "3.060"
+    assert format_number(759773.0) == "759.773"
+    assert "," not in format_int_es(3060)  # no miles con coma
+    assert " " not in format_number(759773.5)
+    assert format_number(759773.5) == "759.773,5"
 
 
 def test_causal_extract_nested_coef():
@@ -254,3 +275,62 @@ def test_invalid_then_valid_repair_apptest():
     df2 = next(iter((at2.session_state.get("loaded_tables") or {}).values()))
     assert list(df2.columns) == ["fecha", "sucursal", "ventas"]
     assert float(df2["ventas"].iloc[0]) == 100.5
+
+
+def test_loader_single_format_note():
+    raw = (
+        "fecha;sucursal;ventas\n"
+        "2024-01-01;Norte;1.234,56\n"
+        "2024-01-02;Sur;980,5\n"
+    ).encode("utf-8")
+    _, meta = load_table(raw, name="ar")
+    notes = [w for w in (meta.get("warnings") or []) if "separador" in w.lower() or "decimal" in w.lower()]
+    assert len(notes) == 1
+
+
+def test_dtype_and_reason_and_campo_valor():
+    assert dtype_label_es("int64") == "entero"
+    assert dtype_label_es("float64") == "decimal"
+    assert dtype_label_es("object") == "texto"
+    assert "faltantes en parte" in reason_plain_es("Se necesitan ≥2 columnas numéricas con missing parcial")
+    tbl = dict_to_table({"reason": "missing parcial", "n_observed": 3060})
+    assert list(tbl.columns) == ["Campo", "Valor"]
+    assert "Motivo" in set(tbl["Campo"])
+    assert "3.060" in set(map(str, tbl["Valor"])) or any("3.060" in str(v) for v in tbl["Valor"])
+
+
+def test_effect_not_forced_percent():
+    df = pd.DataFrame(
+        {
+            "missing_col": ["a"],
+            "predictor": ["b"],
+            "method": ["mannwhitney_missing_vs_observed"],
+            "effect": [0.35],
+            "missing_rate_target": [0.2],
+        }
+    )
+    out = rename_df_columns_es(df)
+    # 0.35 es diff de medias, no 35 %
+    effect_col = [c for c in out.columns if "Efecto" in str(c)][0]
+    assert "35" not in str(out[effect_col].iloc[0]) or "%" not in str(out[effect_col].iloc[0])
+    rate_col = [c for c in out.columns if "% vacíos" in str(c)][0]
+    assert "%" in str(out[rate_col].iloc[0])
+
+
+def test_method_plain_es_and_report(commercial_pack):
+    assert "Spearman" in method_plain_es("Spearman + FDR-BH")
+    assert "corrección por muchas pruebas" in method_plain_es("Spearman + FDR-BH").lower() or (
+        "Correlación por rangos" in method_plain_es("Spearman + FDR-BH")
+    )
+    assert "FDR-BH" in method_plain_es("Spearman + FDR-BH")  # técnico entre paréntesis
+    plain = method_plain_es("Spearman + FDR-BH")
+    assert plain.startswith("Correlación")
+    assert "residuales" not in method_plain_es("ajuste con residuales y covariables").lower()
+
+    from estacion.reports.generator import generate_markdown_report
+
+    _, findings, profile, artifacts = commercial_pack
+    md = generate_markdown_report(profile, findings, artifacts)
+    assert "3.060" in md or format_int_es(profile.n_rows) in md
+    assert "**Método:** Spearman + FDR-BH" not in md
+    assert "Correlación por rangos" in md
