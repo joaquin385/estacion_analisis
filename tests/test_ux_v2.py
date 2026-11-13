@@ -138,7 +138,12 @@ def test_demo_select_persists_with_apptest():
     at = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=120)
     at.run()
     # Botón de la portada
-    demo_btns = [b for b in at.button if "ejemplo de ventas" in (b.label or "").lower()]
+    demo_btns = [
+        b
+        for b in at.button
+        if (b.label or "").strip().lower() in {"ventas", "probar con un ejemplo de ventas"}
+        or "ejemplo de ventas" in (b.label or "").lower()
+    ]
     assert demo_btns, "no está el botón de ejemplo en la portada"
     demo_btns[0].click().run(timeout=120)
     # Debe haber análisis / no portada

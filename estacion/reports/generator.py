@@ -42,9 +42,20 @@ def generate_markdown_report(
         n_rows_txt = str(profile.n_rows)
         n_cols_txt = str(profile.n_cols)
         n_find_txt = str(len(findings))
+    try:
+        from estacion.ux.presentation import format_memory_mb, friendly_dataset_name
+
+        mem_txt = format_memory_mb(profile.memory_mb)
+        name_txt = friendly_dataset_name(profile.name)
+    except Exception:
+        mem_txt = f"{profile.memory_mb} MB"
+        name_txt = profile.name
+    # Reescribir título con nombre amigable si aplica
+    if lines and lines[0].startswith("# Informe"):
+        lines[0] = f"# Informe de análisis — {name_txt}"
     lines.append(
         f"Dataset con **{n_rows_txt}** filas y **{n_cols_txt}** columnas "
-        f"({profile.memory_mb} MB). "
+        f"({mem_txt}). "
         f"Se priorizaron **{n_find_txt}** hallazgos automáticos."
     )
     try:

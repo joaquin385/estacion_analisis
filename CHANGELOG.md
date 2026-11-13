@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.3 — UI Claro SaaS + copy (2026-11-13)
+
+- Rediseño visual Direction A (fondo `#F6F8FB`, índigo `#4F46E5`, Inter) + titular editorial tipo C en el resumen
+- Tarjetas con borde, badges, gráfico chico y detalle técnico sin listas Python (`[]`)
+- Métricas de negocio (ticket, hallazgos fuertes, problemas) y tipografía/espaciado nuevos
+- Copy con números del motor (peso del grupo, impacto de duplicados); unidad `$` vía diccionario o “unidades”
+- Bienvenida sin titular duplicado; demos en español; uploader maquillado a es-AR (CSS frágil)
+- Gráficos Plotly con paleta índigo/lila y separadores es-AR; PDF claro alineado
+- Tests nuevos de copy/formato (`tests/test_ux_redesign.py`)
+
 ## v0.6.2 — UX v2 (2026-11-13)
 
 - Fix crítico: el ejemplo de ventas persiste entre reruns (ya no vuelve a la portada)

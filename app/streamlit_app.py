@@ -83,6 +83,7 @@ try:
         render_load_preview,
         render_finding_cards,
         render_plain_summary,
+        render_summary_header,
         render_segmentation_human,
         DEMO_SELECT_KEY,
         WELCOME_UPLOAD_KEY,
@@ -93,6 +94,7 @@ except ImportError:  # streamlit a veces pone app/ en sys.path
         render_load_preview,
         render_finding_cards,
         render_plain_summary,
+        render_summary_header,
         render_segmentation_human,
         DEMO_SELECT_KEY,
         WELCOME_UPLOAD_KEY,
@@ -100,7 +102,7 @@ except ImportError:  # streamlit a veces pone app/ en sys.path
 import json
 
 st.set_page_config(
-    page_title="Estación Universal de Análisis",
+    page_title="Estación de Análisis",
     page_icon="◈",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -108,35 +110,87 @@ st.set_page_config(
 
 CUSTOM_CSS = """
 <style>
-html, body, [class*="css"] {
-  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html, body, [class*="css"], .stApp, button, input, textarea {
+  font-family: Inter, "Segoe UI", sans-serif !important;
 }
-h1, h2, h3 { color: #0F4C5C !important; }
-.stApp {
-  background:
-    radial-gradient(1200px 500px at 10% -10%, #d8eee8 0%, transparent 55%),
-    radial-gradient(900px 400px at 100% 0%, #f7e6d4 0%, transparent 50%),
-    #f7f4ef;
-}
-.finding-card {
-  background: rgba(255,255,255,0.88);
-  border-left: 5px solid #E36414;
-  padding: 1.05rem 1.15rem;
-  margin-bottom: 1rem;
-  border-radius: 0 12px 12px 0;
-}
+.stApp { background: #F6F8FB; color: #0F172A; }
+h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 700 !important; }
 .brand {
-  font-size: 1.85rem;
-  letter-spacing: 0.02em;
-  color: #0F4C5C;
-  font-weight: 650;
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
+  color: #0F172A;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.25rem;
 }
-.muted { color: #2a3439; font-size: 1rem; }
+.brand:before {
+  content: "";
+  width: 26px; height: 26px; border-radius: 8px;
+  background: linear-gradient(135deg, #4F46E5, #06B6D4);
+  flex: none;
+}
+.ea-eyebrow {
+  display: inline-block;
+  background: #EEF2FF; color: #4F46E5;
+  font-weight: 600; font-size: 0.8rem;
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  margin-bottom: 0.75rem;
+}
+.ea-hero-title {
+  font-size: clamp(1.7rem, 4vw, 2.6rem) !important;
+  line-height: 1.12 !important;
+  letter-spacing: -0.03em !important;
+  color: #0F172A !important;
+  margin: 0.2rem 0 0.6rem 0 !important;
+}
+.ea-lead { color: #475569; font-size: 1.05rem; line-height: 1.5; max-width: 40rem; }
+.ea-headline {
+  font-size: clamp(1.45rem, 3vw, 1.95rem) !important;
+  line-height: 1.2 !important;
+  letter-spacing: -0.025em !important;
+  color: #0F172A !important;
+  margin: 0.15rem 0 0.4rem 0 !important;
+}
+.ea-subhead { color: #475569; font-size: 1.02rem; line-height: 1.5; max-width: 48rem; }
+.ea-sec {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: #64748B; font-weight: 600; margin: 0.4rem 0 0.6rem 0;
+}
+.ea-lbl { color: #94A3B8; font-size: 0.8rem; font-weight: 600; margin: 0.55rem 0 0.1rem 0; }
+.ea-dropzone {
+  background: #fff; border: 2px dashed #C7D2FE; border-radius: 18px;
+  padding: 0.4rem 0.6rem 0.2rem; margin: 0.6rem 0 0.8rem;
+}
+/* Maquillaje frágil del uploader (Streamlit no traduce el chrome en inglés) */
+[data-testid="stFileUploaderDropzone"] small {
+  visibility: hidden; position: relative;
+}
+[data-testid="stFileUploaderDropzone"] small::after {
+  content: "CSV, XLSX · hasta 200 MB";
+  visibility: visible; position: absolute; left: 0; top: 0;
+  color: #64748B; font-size: 0.85rem;
+}
+[data-testid="stFileUploaderDropzone"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stFileUploaderDropzone"] span[data-testid="stFileUploaderDropzoneInstructions"] span {
+  font-size: 0 !important;
+}
+[data-testid="stFileUploaderDropzone"] [data-testid="stMarkdownContainer"] p::after {
+  content: "Arrastrá tu archivo acá";
+  font-size: 0.95rem !important; color: #0F172A; font-weight: 600;
+}
+div[data-testid="stMetric"] {
+  background: #fff; border: 1px solid #E5E9F0; border-radius: 16px;
+  padding: 0.85rem 1rem;
+}
 @media (max-width: 768px) {
-  div[data-testid="stMetric"] { padding: 0.15rem 0.25rem; }
   div[data-testid="stMetric"] label { font-size: 0.75rem !important; }
-  div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
-  .brand { font-size: 1.35rem; }
+  div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.15rem !important; }
+  .brand { font-size: 1.05rem; }
+  .ea-hero-title { font-size: 1.55rem !important; }
+  .ea-headline { font-size: 1.35rem !important; }
 }
 </style>
 """
@@ -175,7 +229,7 @@ DEMO_LABELS = {
     "financial": "Finanzas (ejemplo)",
     "operational": "Operaciones (ejemplo)",
     "segments": "Segmentos (ejemplo)",
-    "causal_confounded": "Causal confounded (prueba)",
+    "causal_confounded": "Causal con confusor (prueba)",
     "nonlinear_null": "Relación nula no lineal (prueba)",
 }
 DOMAIN_LABELS = {k: ("General" if k == "default" else k.capitalize()) for k in DOMAIN_PRESETS}
@@ -241,7 +295,8 @@ def _run_discovery(df, selected, quality_domain, use_ollama):
 
 
 def _render_explore(df, profile):
-    st.subheader("Explorar tus datos")
+    st.subheader("Explorar")
+    st.caption("Mirálos vos: histograma, cajas y relaciones. Los ejes usan formato es-AR.")
     defaults = default_explore_columns(profile)
     cols = list(df.columns)
     plot_cols = [c for c in cols if c not in set(profile.identifier_columns)] or cols
@@ -378,17 +433,42 @@ def _render_informe(df, selected, store):
     st.markdown(generate_markdown_report(profile, findings, artifacts)[:3500])
 
 
+def _build_copy_context(df, profile, selected: str):
+    from estacion.ux.presentation import (
+        CopyContext,
+        friendly_dataset_name,
+        load_dictionary_units,
+        resolve_money_unit,
+    )
+
+    units = load_dictionary_units(name_hint=selected or getattr(profile, "name", None))
+    override = st.session_state.get("money_unit_override")
+    if override in (None, "Auto"):
+        override = None
+    target = None
+    if profile is not None:
+        target = (profile.possible_targets or profile.numeric_columns or [None])[0]
+    money = resolve_money_unit(column=target, dictionary_units=units, override=override)
+    # Si el diccionario trae $ en revenue, usarlo aunque el target no esté
+    if money == "unidades" and units:
+        for col, u in units.items():
+            if u and str(u).strip() in {"$", "USD", "ARS"}:
+                money = str(u).strip()
+                break
+    return CopyContext(
+        df=df,
+        profile=profile,
+        money_unit=money,
+        dataset_label=friendly_dataset_name(selected or getattr(profile, "name", None)),
+    )
+
+
 def main():
     # Reset de uploads antes de instanciar widgets (on_click del botón "Quitar…").
     if st.session_state.pop("_reset_uploads", False):
         _clear_loaded_data()
 
-    st.markdown('<div class="brand">Estación Universal de Análisis de Datos</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="muted">Subí tu planilla y descubrí problemas, patrones y oportunidades. '
-        "Los números salen de código estadístico; la IA (opcional) solo redacta.</p>",
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="brand">Estación de Análisis</div>', unsafe_allow_html=True)
 
     store = SessionStore(ROOT / "outputs" / "sessions")
 
@@ -400,6 +480,12 @@ def main():
             accept_multiple_files=True,
             help="También acepta CSV de Excel en español (separador ; y decimal ,).",
             key="sidebar_uploaded_files",
+        )
+        st.selectbox(
+            "Unidad monetaria",
+            ["Auto", "$", "unidades"],
+            key="money_unit_override",
+            help="Auto usa el diccionario de datos si tiene unidad; si no, 'unidades'.",
         )
         demo_keys = list(DEMO_LABELS.keys())
         # El botón de la portada (on_click) setea DEMO_SELECT_KEY antes de este
@@ -618,27 +704,22 @@ def main():
             "Con tan pocas filas es difícil encontrar patrones (recomendado: 30 o más)."
         )
 
-    if not advanced:
-        tabs = st.tabs(["Resumen", "Explorar tus datos", "Informe"])
-        with tabs[0]:
-            st.subheader("Resumen")
-            from estacion.ux.presentation import format_int_es
+    copy_ctx = _build_copy_context(df, profile, selected)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Filas", format_int_es(profile.n_rows))
-            c2.metric("Columnas", format_int_es(profile.n_cols))
-            c3.metric("Hallazgos", format_int_es(len(findings)))
+    if not advanced:
+        tabs = st.tabs(["Resumen", "Explorar", "Informe"])
+        with tabs[0]:
+            from estacion.ux.presentation import EMPTY_FINDINGS_MESSAGE
+
             empty = not findings
             if empty:
-                st.info(
-                    "No encontramos hallazgos automáticos. "
-                    "Con pocas filas o datos muy parejos es normal. "
-                    "Probá Explorar para mirar los números a ojo."
-                )
+                st.info(EMPTY_FINDINGS_MESSAGE)
             else:
-                render_plain_summary(findings, profile, artifacts)
-                st.markdown("---")
-                render_finding_cards(findings, narratives, show_empty=False)
+                render_summary_header(findings, profile, artifacts, df, ctx=copy_ctx)
+                st.markdown("")
+                render_finding_cards(
+                    findings, narratives, show_empty=False, ctx=copy_ctx, layout="summary"
+                )
         with tabs[1]:
             _render_explore(df, profile)
             with st.expander("Calidad rápida"):
@@ -676,33 +757,23 @@ def main():
     )
 
     with tabs[0]:
-        from estacion.ux.presentation import format_int_es
+        from estacion.ux.presentation import EMPTY_FINDINGS_MESSAGE, format_int_es
 
-        st.caption("¿Para qué sirve? Ver el resumen de hallazgos en lenguaje simple.")
-        st.subheader("Descubrimiento")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Filas", format_int_es(profile.n_rows))
-        c2.metric("Columnas", format_int_es(profile.n_cols))
-        c3.metric("Hallazgos", format_int_es(len(findings)))
-        fdr = artifacts.get("fdr_global") or {}
-        n_sig, n_tested = fdr.get("n_significant"), fdr.get("n_tested")
-        c4.metric(
-            "Hallazgos confiables",
-            (
-                f"{format_int_es(n_sig)}/{format_int_es(n_tested)}"
-                if n_sig is not None and n_tested is not None
-                else "—"
-            ),
-            help="Tras corregir por muchas pruebas (FDR).",
-        )
+        st.caption("Resumen de hallazgos en lenguaje simple, con números que ya calculó el motor.")
         if not findings:
-            st.info(
-                "No encontramos hallazgos automáticos. "
-                "Con pocas filas o datos muy parejos es normal."
-            )
+            st.info(EMPTY_FINDINGS_MESSAGE)
         else:
-            render_plain_summary(findings, profile, artifacts)
-            render_finding_cards(findings, narratives, show_empty=False)
+            render_summary_header(findings, profile, artifacts, df, ctx=copy_ctx)
+            fdr = artifacts.get("fdr_global") or {}
+            n_sig, n_tested = fdr.get("n_significant"), fdr.get("n_tested")
+            if n_sig is not None and n_tested is not None:
+                st.caption(
+                    f"Hallazgos confiables tras corregir por muchas pruebas: "
+                    f"{format_int_es(n_sig)} de {format_int_es(n_tested)}."
+                )
+            render_finding_cards(
+                findings, narratives, show_empty=False, ctx=copy_ctx, layout="summary"
+            )
 
     with tabs[1]:
         from estacion.ux.presentation import format_int_es, format_pct
@@ -713,7 +784,10 @@ def main():
             humanize_granularity_notes,
         )
 
-        st.caption("¿Para qué sirve? Ficha de cada columna y reglas de calidad editables.")
+        st.caption(
+            "La ficha de cada columna: qué tipo de dato es, cuántos vacíos tiene y si algo se ve raro. "
+            "Ej.: te avisa si 'order_id' tiene repetidos cuando debería ser único."
+        )
         st.subheader("Perfil del dataset")
         perfil_df = pd.DataFrame(
             [

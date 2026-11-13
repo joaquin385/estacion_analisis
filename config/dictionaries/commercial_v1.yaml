@@ -19,14 +19,20 @@ columns:
     max: 10
   - name: marketing_spend
     role: numeric
+    unit: "$"
     min: 0
+    description: Gasto en marketing
   - name: discount
     role: numeric
     min: 0
     max: 1
+    description: Descuento
   - name: revenue
     role: numeric
+    unit: "$"
     min: 0
+    description: Facturación
   - name: units
     role: numeric
     min: 1
+    description: Unidades pedidas

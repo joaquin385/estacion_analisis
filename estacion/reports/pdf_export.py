@@ -18,7 +18,7 @@ from estacion.core.types import DatasetProfile, Finding
 
 
 def _wrap(ax, title: str):
-    ax.set_title(title, fontsize=11, loc="left", color="#0F4C5C")
+    ax.set_title(title, fontsize=11, loc="left", color="#0F172A")
     ax.grid(True, alpha=0.25)
 
 
@@ -29,6 +29,15 @@ def _fmt_int(n: Any) -> str:
         return format_int_es(n)
     except Exception:
         return str(n)
+
+
+def _fmt_mem(mb: Any) -> str:
+    try:
+        from estacion.ux.presentation import format_memory_mb
+
+        return format_memory_mb(mb)
+    except Exception:
+        return f"{mb} MB"
 
 
 def generate_pdf_report(
@@ -46,7 +55,7 @@ def generate_pdf_report(
     with PdfPages(output_path) as pdf:
         # Portada / resumen
         fig = plt.figure(figsize=(11.69, 8.27))  # A4 landscape-ish
-        fig.patch.set_facecolor("#F7F4EF")
+        fig.patch.set_facecolor("#F6F8FB")
         ax = fig.add_subplot(111)
         ax.axis("off")
         lines = [
@@ -54,7 +63,7 @@ def generate_pdf_report(
             f"Informe: {profile.name}",
             f"Generado: {datetime.now().isoformat(timespec='seconds')}",
             "",
-            f"Filas: {_fmt_int(profile.n_rows)}   Columnas: {_fmt_int(profile.n_cols)}   Memoria: {profile.memory_mb} MB",
+            f"Filas: {_fmt_int(profile.n_rows)}   Columnas: {_fmt_int(profile.n_cols)}   Memoria: {_fmt_mem(profile.memory_mb)}",
             f"Duplicados: {_fmt_int(profile.duplicate_rows)} ({profile.duplicate_pct:.1%})",
             f"Hallazgos priorizados: {_fmt_int(len(findings))}",
             "",
@@ -91,7 +100,7 @@ def generate_pdf_report(
         miss = miss[miss > 0].head(20)
         if len(miss):
             fig, ax = plt.subplots(figsize=(11, 6))
-            miss.plot(kind="bar", ax=ax, color="#0F4C5C")
+            miss.plot(kind="bar", ax=ax, color="#4F46E5")
             _wrap(ax, "Proporción de valores faltantes (top)")
             ax.set_ylabel("missing %")
             fig.tight_layout()
@@ -105,7 +114,7 @@ def generate_pdf_report(
             axes = axes.ravel()
             for i, col in enumerate(nums):
                 s = pd.to_numeric(df[col], errors="coerce").dropna()
-                axes[i].hist(s, bins=30, color="#E36414", alpha=0.85, edgecolor="white")
+                axes[i].hist(s, bins=30, color="#818CF8", alpha=0.85, edgecolor="white")
                 _wrap(axes[i], f"Distribución: {col}")
             for j in range(len(nums), 4):
                 axes[j].axis("off")
