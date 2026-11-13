@@ -135,9 +135,10 @@ def compare_datasets(
         "n_drifted": len(drifted),
         "alpha": alpha,
         "interpretation": (
-            f"{len(drifted)} columnas con drift estadístico (FDR) y magnitud práctica."
+            f"{len(drifted)} columnas cambiaron de forma (tras corregir por muchas pruebas "
+            "y mirar si el cambio es grande)."
             if drifted
-            else "No se detectó drift práctico+FDR en columnas comunes."
+            else "No se detectaron cambios claros y relevantes entre las columnas comunes."
         ),
         "limitations": [
             "KS/chi2 detectan cualquier diferencia de distribución; no todas importan al negocio.",

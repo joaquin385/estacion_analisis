@@ -69,12 +69,29 @@ def time_series_plot(df: pd.DataFrame, date_col: str, value_col: str, color: str
     return fig
 
 
-def cluster_scatter(coords: np.ndarray, labels, title: str = "Segmentos (PCA 2D)"):
+def cluster_scatter(
+    coords: np.ndarray,
+    labels,
+    title: str = "Segmentos (PCA 2D)",
+    *,
+    muted: bool = False,
+):
     plot_df = pd.DataFrame({
         "PC1": coords[:, 0],
         "PC2": coords[:, 1],
         "cluster": labels.astype(str) if hasattr(labels, "astype") else [str(x) for x in labels],
     })
+    if muted:
+        # Gris / baja opacidad cuando no hay grupos naturales
+        fig = px.scatter(
+            plot_df, x="PC1", y="PC2",
+            template=TEMPLATE,
+            title=title + " (sin grupos claros)",
+            opacity=0.25,
+        )
+        fig.update_traces(marker=dict(color="#9aa0a6"))
+        fig.update_layout(coloraxis_showscale=False, showlegend=False)
+        return fig
     fig = px.scatter(
         plot_df, x="PC1", y="PC2", color="cluster",
         template=TEMPLATE, color_discrete_sequence=COLORWAY,

@@ -22,6 +22,15 @@ def _wrap(ax, title: str):
     ax.grid(True, alpha=0.25)
 
 
+def _fmt_int(n: Any) -> str:
+    try:
+        from estacion.ux.presentation import format_int_es
+
+        return format_int_es(n)
+    except Exception:
+        return str(n)
+
+
 def generate_pdf_report(
     df: pd.DataFrame,
     profile: DatasetProfile,
@@ -45,22 +54,25 @@ def generate_pdf_report(
             f"Informe: {profile.name}",
             f"Generado: {datetime.now().isoformat(timespec='seconds')}",
             "",
-            f"Filas: {profile.n_rows:,}   Columnas: {profile.n_cols}   Memoria: {profile.memory_mb} MB",
-            f"Duplicados: {profile.duplicate_rows} ({profile.duplicate_pct:.1%})",
-            f"Hallazgos priorizados: {len(findings)}",
+            f"Filas: {_fmt_int(profile.n_rows)}   Columnas: {_fmt_int(profile.n_cols)}   Memoria: {profile.memory_mb} MB",
+            f"Duplicados: {_fmt_int(profile.duplicate_rows)} ({profile.duplicate_pct:.1%})",
+            f"Hallazgos priorizados: {_fmt_int(len(findings))}",
             "",
             "Resumen en lenguaje simple:",
         ]
         try:
-            from estacion.ux.presentation import build_plain_summary, humanize_finding, sort_findings_for_humans
+            from estacion.ux.presentation import (
+                build_plain_summary,
+                dedupe_findings,
+                plain_finding_line,
+            )
 
             for b in build_plain_summary(findings, profile, artifacts):
                 lines.append(f"• {b}")
             lines.append("")
             lines.append("Hallazgos principales:")
-            for i, f in enumerate(sort_findings_for_humans(findings)[:8], 1):
-                h = humanize_finding(f)
-                lines.append(f"{i}. [{h['label']}] {h['title_simple']} — {f.magnitude}")
+            for i, f in enumerate(dedupe_findings(findings)[:8], 1):
+                lines.append(f"{i}. {plain_finding_line(f)}")
         except Exception:
             lines.append("Hallazgos principales:")
             for i, f in enumerate(findings[:8], 1):
@@ -138,14 +150,51 @@ def generate_pdf_report(
             fig = plt.figure(figsize=(11.69, 8.27))
             ax = fig.add_subplot(111)
             ax.axis("off")
+            try:
+                from estacion.ux.presentation import (
+                    humanize_finding,
+                    format_magnitude,
+                    evidence_pairs_plain,
+                    CATEGORY_LABELS_ES,
+                    SEVERITY_LABELS_ES,
+                    bool_es,
+                    method_plain_es,
+                )
+
+                h = humanize_finding(f)
+                title = h["title_simple"]
+                mag = format_magnitude(f.magnitude, finding=f)
+                obs = h["what"]
+                ev_lines = [f"- {k}: {v}" for k, v in evidence_pairs_plain(f.evidence)]
+                cat = CATEGORY_LABELS_ES.get(f.category.value, f.category.value)
+                sev = SEVERITY_LABELS_ES.get(f.severity.value, f.severity.value)
+                method_txt = method_plain_es(f.method)
+                sig_line = None
+                if f.statistically_significant is not None:
+                    sig_line = f"Estadísticamente significativo: {bool_es(f.statistically_significant)}"
+                prac_line = None
+                if f.practically_important is not None:
+                    prac_line = f"Prácticamente importante: {bool_es(f.practically_important)}"
+            except Exception:
+                title = f.title
+                mag = str(f.magnitude)
+                obs = f.observation
+                ev_lines = []
+                cat = f.category.value
+                sev = f.severity.value
+                method_txt = str(f.method)
+                sig_line = None
+                prac_line = None
             text = [
-                f.title,
-                f"Categoría: {f.category.value} | Severidad: {f.severity.value} | Score: {f.score:.0f}",
-                f"Magnitud: {f.magnitude}",
-                f"Método: {f.method}",
+                title,
+                f"Categoría: {cat} | Severidad: {sev} | Score: {f.score:.0f}",
+                f"Magnitud: {mag}",
+                f"Método: {method_txt}",
+                *([sig_line] if sig_line else []),
+                *([prac_line] if prac_line else []),
                 "",
                 "Observación:",
-                f.observation,
+                obs,
                 "",
                 "Explicaciones alternativas:",
                 *[f"- {a}" for a in f.alternative_explanations],
@@ -156,7 +205,8 @@ def generate_pdf_report(
                 "Limitaciones:",
                 *[f"- {a}" for a in (f.limitations or ["—"])],
                 "",
-                f"Evidencia (resumen): {str(f.evidence)[:900]}",
+                "Evidencia (clave):",
+                *(ev_lines or ["- —"]),
             ]
             ax.text(0.02, 0.98, "\n".join(text), va="top", ha="left", family="DejaVu Sans", fontsize=10)
             pdf.savefig(fig, bbox_inches="tight")

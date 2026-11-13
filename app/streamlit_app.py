@@ -75,6 +75,7 @@ from estacion.ux.presentation import (
     default_explore_columns,
     default_causal_columns,
     format_p_value,
+    format_number,
 )
 try:
     from app.panels import (
@@ -83,6 +84,8 @@ try:
         render_finding_cards,
         render_plain_summary,
         render_segmentation_human,
+        DEMO_SELECT_KEY,
+        WELCOME_UPLOAD_KEY,
     )
 except ImportError:  # streamlit a veces pone app/ en sys.path
     from panels import (  # type: ignore
@@ -91,6 +94,8 @@ except ImportError:  # streamlit a veces pone app/ en sys.path
         render_finding_cards,
         render_plain_summary,
         render_segmentation_human,
+        DEMO_SELECT_KEY,
+        WELCOME_UPLOAD_KEY,
     )
 import json
 
@@ -127,9 +132,42 @@ h1, h2, h3 { color: #0F4C5C !important; }
   font-weight: 650;
 }
 .muted { color: #2a3439; font-size: 1rem; }
+@media (max-width: 768px) {
+  div[data-testid="stMetric"] { padding: 0.15rem 0.25rem; }
+  div[data-testid="stMetric"] label { font-size: 0.75rem !important; }
+  div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+  .brand { font-size: 1.35rem; }
+}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+def _clear_loaded_data() -> None:
+    """Quitar archivo / volver al inicio (limpia tablas y uploaders)."""
+    for k in (
+        "loaded_tables",
+        "load_metas",
+        "load_source",
+        "findings",
+        "profile",
+        "artifacts",
+        "narratives",
+        "active_table",
+        "quality_domain",
+        WELCOME_UPLOAD_KEY,
+        "sidebar_uploaded_files",
+        "repair_uploaded_files",
+        "_prefer_loaded_upload",
+        "_run_analyze",
+        "_pdf_bytes_keys",
+    ):
+        st.session_state.pop(k, None)
+    # Limpiar caches de PDF
+    for k in list(st.session_state.keys()):
+        if str(k).startswith("_pdf_bytes::"):
+            st.session_state.pop(k, None)
+    st.session_state[DEMO_SELECT_KEY] = "—"
 
 DEMO_LABELS = {
     "—": "—",
@@ -143,15 +181,37 @@ DEMO_LABELS = {
 DOMAIN_LABELS = {k: ("General" if k == "default" else k.capitalize()) for k in DOMAIN_PRESETS}
 
 
+def _read_upload_bytes(f) -> bytes:
+    """Leer bytes de un UploadedFile rebobinando el buffer (Streamlit no siempre resetea)."""
+    if hasattr(f, "seek"):
+        try:
+            f.seek(0)
+        except Exception:
+            pass
+    data = f.read() if hasattr(f, "read") else b""
+    if not data and hasattr(f, "getvalue"):
+        try:
+            data = f.getvalue()
+        except Exception:
+            data = b""
+    return data or b""
+
+
 def _load_uploaded(files) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
     tables = {}
     metas = {}
     for f in files:
-        data = f.read()
+        data = _read_upload_bytes(f)
         df, meta = load_table(data, name=Path(f.name).stem)
         tables[meta["name"]] = df
         metas[meta["name"]] = meta
     return tables, metas
+
+
+def _apply_uploaded_tables(tables: dict, metas: dict) -> None:
+    st.session_state["loaded_tables"] = tables
+    st.session_state["load_metas"] = metas
+    st.session_state["load_source"] = "upload"
 
 
 @st.cache_data(show_spinner=False)
@@ -277,12 +337,21 @@ def _render_informe(df, selected, store):
     out_dir = ROOT / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if st.button("Descargar informe (PDF)", type="primary"):
+    # PDF en un solo clic: generar (o reutilizar cache de sesión) y ofrecer download directo.
+    cache_key = f"_pdf_bytes::{selected}::{len(findings)}::{profile.n_rows}"
+    if cache_key not in st.session_state:
         pdf_path = out_dir / f"{selected}_informe.pdf"
-        with st.spinner("Generando PDF…"):
+        with st.spinner("Preparando PDF…"):
             generate_pdf_report(df, profile, findings, pdf_path, artifacts)
-        with open(pdf_path, "rb") as fh:
-            st.download_button("Descargar PDF", fh, file_name=pdf_path.name, key="pdf_dl")
+            st.session_state[cache_key] = pdf_path.read_bytes()
+    st.download_button(
+        "Descargar informe (PDF)",
+        data=st.session_state[cache_key],
+        file_name=f"{selected}_informe.pdf",
+        mime="application/pdf",
+        type="primary",
+        key="pdf_dl_direct",
+    )
 
     with st.expander("Otros formatos"):
         md = generate_markdown_report(profile, findings, artifacts)
@@ -294,21 +363,26 @@ def _render_informe(df, selected, store):
             export_findings_json(findings, out_dir / f"{selected}_hallazgos.json")
             st.success("Guardado en outputs/")
 
-    sess_name = st.text_input("Nombre de sesión", value=selected)
-    if st.button("Guardar sesión"):
-        meta = store.save(df, profile, findings, artifacts, name=sess_name, notes="UI save")
-        st.success(f"Sesión guardada: {meta.id}")
+    with st.expander("Guardar este análisis para verlo después"):
+        st.caption(
+            "Guardá una copia local del análisis (datos + hallazgos) para reabrirla "
+            "más adelante desde “Cargar sesión” en la barra lateral."
+        )
+        sess_name = st.text_input("Nombre para este análisis", value=selected)
+        if st.button("Guardar análisis", help="Queda disponible en esta computadora, en outputs/sessions."):
+            meta = store.save(df, profile, findings, artifacts, name=sess_name, notes="UI save")
+            st.success(f"Análisis guardado: {meta.id}")
 
     st.markdown("#### Vista previa del informe")
-    bullets = __import__("estacion.ux.presentation", fromlist=["build_plain_summary"]).build_plain_summary(
-        findings, profile, artifacts
-    )
-    for b in bullets:
-        st.markdown(f"- {b}")
+    # Una sola vez: el markdown ya incluye el resumen en lenguaje simple.
     st.markdown(generate_markdown_report(profile, findings, artifacts)[:3500])
 
 
 def main():
+    # Reset de uploads antes de instanciar widgets (on_click del botón "Quitar…").
+    if st.session_state.pop("_reset_uploads", False):
+        _clear_loaded_data()
+
     st.markdown('<div class="brand">Estación Universal de Análisis de Datos</div>', unsafe_allow_html=True)
     st.markdown(
         '<p class="muted">Subí tu planilla y descubrí problemas, patrones y oportunidades. '
@@ -325,16 +399,23 @@ def main():
             type=["csv", "xlsx", "xls"],
             accept_multiple_files=True,
             help="También acepta CSV de Excel en español (separador ; y decimal ,).",
+            key="sidebar_uploaded_files",
         )
         demo_keys = list(DEMO_LABELS.keys())
-        forced = st.session_state.pop("want_commercial", None)
-        if forced:
+        # El botón de la portada (on_click) setea DEMO_SELECT_KEY antes de este
+        # punto en el rerun. Key fija: el valor persiste entre interacciones.
+        if st.session_state.pop("want_commercial", None):
             st.session_state["_auto_analyze_once"] = True
-        demo_index = demo_keys.index(forced) if forced in demo_keys else 0
+            # want_commercial se setea en el mismo on_click que DEMO_SELECT_KEY;
+            # no volvemos a asignar DEMO_SELECT_KEY acá (el selectbox ya puede existir).
+        if DEMO_SELECT_KEY not in st.session_state:
+            st.session_state[DEMO_SELECT_KEY] = "—"
+        elif st.session_state[DEMO_SELECT_KEY] not in demo_keys:
+            st.session_state[DEMO_SELECT_KEY] = "—"
         demo = st.selectbox(
             "O probá un ejemplo",
             demo_keys,
-            index=demo_index,
+            key=DEMO_SELECT_KEY,
             format_func=lambda k: DEMO_LABELS[k],
         )
 
@@ -365,11 +446,20 @@ def main():
     tables: dict[str, pd.DataFrame] = {}
     load_metas: dict[str, dict] = {}
 
+    # Prioridad de carga:
+    # 1) reparación ("Subir otro archivo") — gana sobre el inválido de la portada
+    # 2) sidebar
+    # 3) portada
+    # 4) tablas ya parseadas en session_state
+    # Siempre seek(0) al leer: si no, un re-read tras rerun devuelve vacío.
+    repair_files = st.session_state.get("repair_uploaded_files") or []
+    welcome_uploaded = st.session_state.get(WELCOME_UPLOAD_KEY) or []
+
     if pick_session and pick_session != "—":
         sid = pick_session.rsplit("(", 1)[-1].rstrip(")")
         loaded = store.load(sid)
         if loaded.get("df") is not None:
-            tables[loaded["meta"]["dataset_name"]] = loaded["df"]
+            tables = {loaded["meta"]["dataset_name"]: loaded["df"]}
             from estacion.core.types import Finding, FindingCategory, FindingSeverity
 
             findings_loaded = []
@@ -402,34 +492,89 @@ def main():
             st.session_state["active_table"] = loaded["meta"]["dataset_name"]
             st.session_state["quality_domain"] = quality_domain
             st.session_state["narratives"] = interpret_findings(findings_loaded, try_ollama=use_ollama)
+            st.session_state["loaded_tables"] = tables
+            st.session_state["load_source"] = "session"
             st.sidebar.success(f"Sesión {sid} cargada")
+    elif repair_files:
+        tables, load_metas = _load_uploaded(repair_files)
+        _apply_uploaded_tables(tables, load_metas)
+        # El inválido de la portada no debe volver a pisar este resultado.
+        st.session_state.pop(WELCOME_UPLOAD_KEY, None)
+        st.session_state["_prefer_loaded_upload"] = True
     elif uploaded:
         tables, load_metas = _load_uploaded(uploaded)
-        st.session_state["load_metas"] = load_metas
+        _apply_uploaded_tables(tables, load_metas)
+        st.session_state.pop("repair_uploaded_files", None)
+        st.session_state.pop("_prefer_loaded_upload", None)
+    elif welcome_uploaded and not st.session_state.get("_prefer_loaded_upload"):
+        tables, load_metas = _load_uploaded(welcome_uploaded)
+        _apply_uploaded_tables(tables, load_metas)
     elif demo and demo != "—":
         path = ROOT / "data" / "synthetic" / f"{demo}.csv"
         if path.exists():
             df, meta = load_table(path)
-            tables[meta["name"]] = df
-            load_metas[meta["name"]] = meta
+            tables = {meta["name"]: df}
+            load_metas = {meta["name"]: meta}
+            st.session_state["loaded_tables"] = tables
+            st.session_state["load_metas"] = load_metas
+            st.session_state["load_source"] = "demo"
         else:
             st.warning("Dataset de ejemplo no generado. Ejecutá: python -m data.synthetic.generate_datasets")
+    elif st.session_state.get("loaded_tables") and st.session_state.get("load_source") == "upload":
+        # Recuperar tablas ya parseadas (p.ej. tras salir de la portada o tras reparar).
+        tables = st.session_state["loaded_tables"]
+        load_metas = st.session_state.get("load_metas") or {}
 
     if not tables:
-        render_welcome()
+        render_welcome(demo_select_key=DEMO_SELECT_KEY)
         return
 
     names = list(tables.keys())
     selected = st.sidebar.selectbox("Tabla activa", names) if len(names) > 1 else names[0]
     df = tables[selected]
     meta = (st.session_state.get("load_metas") or load_metas or {}).get(selected) or {}
+    from_upload = st.session_state.get("load_source") == "upload"
+    bad_parse = bool(meta.get("suspicious_parse") and meta.get("n_cols") == 1)
 
-    if uploaded or meta.get("warnings") or meta.get("suspicious_parse"):
-        with st.expander("Vista previa de la carga", expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1):
-            render_load_preview(df, meta)
+    def _on_clear_upload() -> None:
+        st.session_state["_reset_uploads"] = True
+        st.session_state.pop("repair_uploaded_files", None)
+        st.session_state.pop("_prefer_loaded_upload", None)
 
-    if meta.get("suspicious_parse") and meta.get("n_cols") == 1:
-        st.stop()
+    auto_once = st.session_state.pop("_auto_analyze_once", False)
+    run_analyze_now = bool(
+        run_btn or auto_once or st.session_state.pop("_run_analyze", False)
+    )
+    show_analyze_prompt = not _analysis_ready(selected, quality_domain) and not run_analyze_now
+    # Evitar tabla duplicada: expander (mensajes) + preview bajo Analizar.
+    preview_table_in_expander = not (from_upload and show_analyze_prompt and not bad_parse)
+
+    if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
+        with st.expander(
+            "Vista previa de la carga",
+            expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1,
+        ):
+            render_load_preview(df, meta, show_table=preview_table_in_expander)
+
+    if from_upload or bad_parse:
+        c_clear, c_up = st.columns([1, 2])
+        with c_clear:
+            st.button(
+                "Quitar archivo / Volver al inicio",
+                on_click=_on_clear_upload,
+                key="btn_clear_upload",
+            )
+        if bad_parse:
+            with c_up:
+                st.file_uploader(
+                    "Subir otro archivo",
+                    type=["csv", "xlsx", "xls"],
+                    accept_multiple_files=True,
+                    key="repair_uploaded_files",
+                    help="Elegí otro CSV o Excel con separador correcto.",
+                )
+            # El próximo run prioriza repair_uploaded_files arriba y descarta el inválido.
+            st.stop()
 
     if len(tables) > 1 and advanced:
         with st.expander("Relaciones entre tablas"):
@@ -437,12 +582,27 @@ def main():
             st.write(graph.get("note"))
             st.dataframe(pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(), width="stretch")
 
-    if run_btn or st.session_state.pop("_auto_analyze_once", False):
+    def _on_main_analyze() -> None:
+        st.session_state["_run_analyze"] = True
+
+    if show_analyze_prompt:
+        st.info("Datos listos. Pulsá **Analizar** para generar el resumen.")
+        st.button(
+            "Analizar",
+            type="primary",
+            key="main_analyze_btn",
+            help="Corre el análisis automático sobre la planilla cargada.",
+            on_click=_on_main_analyze,
+        )
+        from estacion.ux.presentation import dataframe_for_display
+
+        st.dataframe(dataframe_for_display(df.head(12)), width="stretch")
+        return
+
+    if run_analyze_now:
         _run_discovery(df, selected, quality_domain, use_ollama)
 
     if not _analysis_ready(selected, quality_domain):
-        st.info("Datos listos. Pulsá **Analizar** en la barra lateral para generar el resumen.")
-        st.dataframe(df.head(12), width="stretch")
         return
 
     findings = st.session_state["findings"]
@@ -450,17 +610,35 @@ def main():
     artifacts = st.session_state["artifacts"]
     narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
 
+    if profile.n_rows < 30 and not bad_parse:
+        from estacion.ux.presentation import format_n_rows
+
+        st.warning(
+            f"Tu archivo tiene solo **{format_n_rows(profile.n_rows)}**. "
+            "Con tan pocas filas es difícil encontrar patrones (recomendado: 30 o más)."
+        )
+
     if not advanced:
         tabs = st.tabs(["Resumen", "Explorar tus datos", "Informe"])
         with tabs[0]:
             st.subheader("Resumen")
+            from estacion.ux.presentation import format_int_es
+
             c1, c2, c3 = st.columns(3)
-            c1.metric("Filas", f"{profile.n_rows:,}")
-            c2.metric("Columnas", profile.n_cols)
-            c3.metric("Hallazgos", len(findings))
-            render_plain_summary(findings, profile, artifacts)
-            st.markdown("---")
-            render_finding_cards(findings, narratives)
+            c1.metric("Filas", format_int_es(profile.n_rows))
+            c2.metric("Columnas", format_int_es(profile.n_cols))
+            c3.metric("Hallazgos", format_int_es(len(findings)))
+            empty = not findings
+            if empty:
+                st.info(
+                    "No encontramos hallazgos automáticos. "
+                    "Con pocas filas o datos muy parejos es normal. "
+                    "Probá Explorar para mirar los números a ojo."
+                )
+            else:
+                render_plain_summary(findings, profile, artifacts)
+                st.markdown("---")
+                render_finding_cards(findings, narratives, show_empty=False)
         with tabs[1]:
             _render_explore(df, profile)
             with st.expander("Calidad rápida"):
@@ -485,55 +663,113 @@ def main():
     # --- Modo avanzado ---
     tabs = st.tabs(
         [
-            "Resumen / Descubrimiento",
-            "Perfil / Reglas",
-            "Datos faltantes",
+            "Resumen",
+            "Perfil",
+            "Faltantes",
             "Explorar",
             "Estadística",
-            "Segmentación",
-            "¿Qué causa qué?",
-            "Comparar archivos",
-            "Informe / Sesiones",
+            "Segmentos",
+            "Causa",
+            "Comparar",
+            "Informe",
         ]
     )
 
     with tabs[0]:
+        from estacion.ux.presentation import format_int_es
+
+        st.caption("¿Para qué sirve? Ver el resumen de hallazgos en lenguaje simple.")
         st.subheader("Descubrimiento")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Filas", f"{profile.n_rows:,}")
-        c2.metric("Columnas", profile.n_cols)
-        c3.metric("Hallazgos", len(findings))
+        c1.metric("Filas", format_int_es(profile.n_rows))
+        c2.metric("Columnas", format_int_es(profile.n_cols))
+        c3.metric("Hallazgos", format_int_es(len(findings)))
         fdr = artifacts.get("fdr_global") or {}
+        n_sig, n_tested = fdr.get("n_significant"), fdr.get("n_tested")
         c4.metric(
             "Hallazgos confiables",
-            f"{fdr.get('n_significant', '—')}/{fdr.get('n_tested', '—')}",
+            (
+                f"{format_int_es(n_sig)}/{format_int_es(n_tested)}"
+                if n_sig is not None and n_tested is not None
+                else "—"
+            ),
             help="Tras corregir por muchas pruebas (FDR).",
         )
-        render_plain_summary(findings, profile, artifacts)
-        render_finding_cards(findings, narratives)
+        if not findings:
+            st.info(
+                "No encontramos hallazgos automáticos. "
+                "Con pocas filas o datos muy parejos es normal."
+            )
+        else:
+            render_plain_summary(findings, profile, artifacts)
+            render_finding_cards(findings, narratives, show_empty=False)
 
     with tabs[1]:
-        st.subheader("Perfil del dataset")
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Columna": v.name,
-                        "Tipo": v.dtype,
-                        "Rol": v.role.value,
-                        "% vacíos": round(v.missing_pct * 100, 2),
-                        "Únicos": v.n_unique,
-                        "Avisos": "; ".join(v.warnings),
-                    }
-                    for v in profile.variables
-                ]
-            ),
-            width="stretch",
+        from estacion.ux.presentation import format_int_es, format_pct
+        from estacion.ux.result_views import (
+            ROLE_LABELS_ES,
+            descriptive_table_es,
+            dtype_label_es,
+            humanize_granularity_notes,
         )
-        st.write("**Granularidad:**", profile.granularity_notes or "—")
+
+        st.caption("¿Para qué sirve? Ficha de cada columna y reglas de calidad editables.")
+        st.subheader("Perfil del dataset")
+        perfil_df = pd.DataFrame(
+            [
+                {
+                    "Columna": v.name,
+                    "Tipo": dtype_label_es(v.dtype),
+                    "Rol": ROLE_LABELS_ES.get(v.role.value, v.role.value),
+                    "% vacíos": format_pct(v.missing_pct, digits=1),
+                    "Únicos": format_int_es(v.n_unique),
+                    "Avisos": "; ".join(v.warnings) or "—",
+                }
+                for v in profile.variables
+            ]
+        )
+        st.dataframe(
+            perfil_df,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Columna": st.column_config.TextColumn("Columna", width="medium"),
+                "Tipo": st.column_config.TextColumn("Tipo", width="small"),
+                "Rol": st.column_config.TextColumn("Rol", width="small"),
+                "% vacíos": st.column_config.TextColumn("% vacíos", width="small"),
+                "Únicos": st.column_config.TextColumn("Únicos", width="small"),
+                "Avisos": st.column_config.TextColumn("Avisos", width="large"),
+            },
+        )
+        long_avisos = [(r["Columna"], r["Avisos"]) for _, r in perfil_df.iterrows() if r["Avisos"] not in {"—", ""}]
+        if long_avisos:
+            with st.expander("Avisos completos por columna", expanded=False):
+                for col_name, avisos in long_avisos:
+                    st.markdown(f"**{col_name}:** {avisos}")
+        notes = humanize_granularity_notes(profile.granularity_notes)
+        if notes:
+            st.markdown("**Granularidad:**")
+            for n in notes:
+                st.markdown(f"- {n}")
+        else:
+            st.write("**Granularidad:** —")
         if profile.numeric_columns:
             st.write("**Descriptivos**")
-            st.dataframe(pd.DataFrame(descriptive_report(df, profile.numeric_columns)).T)
+            desc_df = descriptive_table_es(descriptive_report(df, profile.numeric_columns))
+            method_cfg = {}
+            if "Método" in desc_df.columns:
+                method_cfg["Método"] = st.column_config.TextColumn("Método", width="large")
+            st.dataframe(
+                desc_df,
+                width="stretch",
+                hide_index=True,
+                column_config=method_cfg or None,
+            )
+            if "Método" in desc_df.columns:
+                with st.expander("Métodos de los descriptivos (texto completo)", expanded=False):
+                    for _, row in desc_df.iterrows():
+                        var = row.get("Variable", row.get("variable", "—"))
+                        st.markdown(f"**{var}:** {row.get('Método', '—')}")
 
         st.subheader("Editor de reglas de calidad")
         base = load_rules(domain=quality_domain)
@@ -545,11 +781,13 @@ def main():
             "Columnas no negativas",
             list(df.columns),
             default=[c for c in base.non_negative_columns if c in df.columns],
+            placeholder="Elegí opciones",
         )
         ids_u = st.multiselect(
             "IDs que deben ser únicos",
             list(df.columns),
             default=[c for c in base.id_columns_must_be_unique if c in df.columns],
+            placeholder="Elegí opciones",
         )
         sentinels = st.text_input(
             "Valores trampa (coma-separados)",
@@ -583,7 +821,13 @@ def main():
         qres = evaluate_quality_rules(df, custom_rules)
         st.write(f"**Violaciones:** {qres['n_violations']} (críticas: {qres['n_critical']})")
         if qres.get("violations"):
-            st.dataframe(pd.DataFrame(qres["violations"]), width="stretch")
+            from estacion.ux.result_views import rename_df_columns_es
+
+            st.dataframe(
+                rename_df_columns_es(pd.DataFrame(qres["violations"])),
+                width="stretch",
+                hide_index=True,
+            )
 
         st.subheader("Plugins de dominio")
         plugs = list_plugins()
@@ -621,8 +865,8 @@ def main():
             st.dataframe(pd.DataFrame(dv.get("findings") or []), width="stretch")
 
     with tabs[2]:
+        st.caption("¿Para qué sirve? Entender si los vacíos parecen al azar o siguen un patrón.")
         st.subheader("Datos faltantes")
-        st.caption("¿Los vacíos parecen al azar o dependen de otras columnas?")
         if st.button("Analizar faltantes", key="miss_btn"):
             st.session_state["missingness"] = analyze_missingness(df)
         miss = st.session_state.get("missingness") or artifacts.get("missingness")
@@ -634,9 +878,11 @@ def main():
             st.info("Pulsá 'Analizar faltantes' para el detalle.")
 
     with tabs[3]:
+        st.caption("¿Para qué sirve? Mirar tus datos con gráficos antes de confiar en un número.")
         _render_explore(df, profile)
 
     with tabs[4]:
+        st.caption("¿Para qué sirve? Comparar grupos o ajustar un modelo simple y dirigido.")
         st.subheader("Estadística dirigida")
         mode = st.radio(
             "Análisis",
@@ -657,11 +903,24 @@ def main():
                         f"{'Hay diferencias significativas' if res.get('significant') else 'No hay diferencias claras'} "
                         f"entre grupos (p = {format_p_value(res.get('p_value'))})."
                     )
-                    st.write(f"Efecto d = {res.get('effect_size_cohens_d')}")
+                    effect = res.get("effect_size_cohens_d")
+                    eta = res.get("effect_size_eta_sq")
+                    if effect is not None:
+                        st.write(f"Tamaño del efecto (d de Cohen) ≈ {format_number(effect)}")
+                    elif eta is not None:
+                        st.write(f"Tamaño del efecto (eta²) ≈ {format_number(eta)}")
+                    else:
+                        st.write(
+                            "Tamaño del efecto: no se pudo calcular "
+                            "(la comparación no devolvió d de Cohen ni eta²)."
+                        )
                     if res.get("group_means"):
                         st.dataframe(
                             pd.DataFrame(
-                                [{"grupo": k, "media": v} for k, v in res["group_means"].items()]
+                                [
+                                    {"grupo": k, "media": format_number(val)}
+                                    for k, val in res["group_means"].items()
+                                ]
                             ),
                             width="stretch",
                         )
@@ -673,23 +932,38 @@ def main():
                     st.warning(res.get("reason"))
         elif mode == "Regresión lineal":
             y = st.selectbox("y", profile.numeric_columns or list(df.columns), key="lin_y")
-            xs = st.multiselect("x", [c for c in df.columns if c != y], key="lin_x")
+            xs = st.multiselect(
+                "x", [c for c in df.columns if c != y], key="lin_x", placeholder="Elegí opciones"
+            )
             if xs and st.button("Ajustar OLS"):
                 res = linear_regression(df, y, xs)
                 st.text(res.get("summary_text") or res)
                 st.write(res.get("limitations"))
         else:
             y = st.selectbox("y binaria", profile.possible_targets or list(df.columns), key="log_y")
-            xs = st.multiselect("x", [c for c in df.columns if c != y], key="log_x")
+            xs = st.multiselect(
+                "x", [c for c in df.columns if c != y], key="log_x", placeholder="Elegí opciones"
+            )
             if xs and st.button("Ajustar Logit"):
                 res = logistic_regression(df, y, xs)
                 st.text(res.get("summary_text") or res)
                 st.write(res.get("limitations"))
 
     with tabs[5]:
+        st.caption("¿Para qué sirve? Buscar 'tipos' de filas parecidas (clientes, pedidos, etc.).")
         st.subheader("Segmentación")
-        nums = st.multiselect("Numéricas", profile.numeric_columns, default=profile.numeric_columns[:5])
-        cats = st.multiselect("Categóricas (mixtas)", profile.categorical_columns, default=[])
+        nums = st.multiselect(
+            "Numéricas",
+            profile.numeric_columns,
+            default=profile.numeric_columns[:5],
+            placeholder="Elegí opciones",
+        )
+        cats = st.multiselect(
+            "Categóricas (mixtas)",
+            profile.categorical_columns,
+            default=[],
+            placeholder="Elegí opciones",
+        )
         if st.button("Correr segmentación") and len(nums) >= 2:
             with st.spinner("Evaluando agrupamientos…"):
                 st.session_state["seg"] = run_segmentation(df, nums, cats)
@@ -699,11 +973,18 @@ def main():
             labels = seg.get("kmeans", {}).get("labels")
             coords = seg.get("pca_coords")
             if labels is not None and coords is not None:
-                if not seg.get("natural_groups_likely"):
-                    st.caption("Gráfico atenuado: partición forzada.")
-                st.plotly_chart(cluster_scatter(coords, labels), width="stretch")
+                natural = bool(seg.get("natural_groups_likely"))
+                if not natural:
+                    with st.expander("Ver gráfico (atenuado: sin grupos naturales)"):
+                        st.plotly_chart(
+                            cluster_scatter(coords, labels, muted=True),
+                            width="stretch",
+                        )
+                else:
+                    st.plotly_chart(cluster_scatter(coords, labels), width="stretch")
 
     with tabs[6]:
+        st.caption("¿Para qué sirve? Explorar si una cosa se asocia a otra controlando confusores. No prueba causalidad.")
         st.subheader("¿Qué causa qué? (exploratorio)")
         st.warning("Ningún resultado demuestra causalidad. Son asociaciones bajo supuestos fuertes.")
         causal_mode = st.radio(
@@ -740,6 +1021,7 @@ def main():
                 default=[c for c in defaults_c["confounders"] if c not in {treatment, outcome}],
                 help="Variables que afectan ambos, ej. tamaño de cliente.",
                 key="c_c",
+                placeholder="Elegí opciones",
             )
             if st.button("Explorar causalmente"):
                 if outcome not in profile.numeric_columns and not pd.api.types.is_numeric_dtype(df[outcome]):
@@ -806,6 +1088,7 @@ def main():
                 periods,
                 default=periods[-1:] if periods else [],
                 help="Períodos después de la intervención.",
+                placeholder="Elegí opciones",
             )
             if post and st.button("Correr DiD"):
                 st.session_state["did"] = difference_in_differences_multipperiod(
@@ -863,6 +1146,7 @@ def main():
                 "Covariables AIPW (opcional)",
                 [c for c in cols if c not in {outcome, unit, time_c, tt}],
                 key="cs_aipw_x",
+                placeholder="Elegí opciones",
             )
             b1, b2 = st.columns(2)
             with b1:
@@ -891,7 +1175,13 @@ def main():
                     st.warning(aipw.get("reason"))
         else:
             st.caption("Editor DAG: roles + aristas + canvas.")
-            nodes = st.multiselect("Nodos", cols, default=cols[: min(6, len(cols))], key="dag_nodes")
+            nodes = st.multiselect(
+                "Nodos",
+                cols,
+                default=cols[: min(6, len(cols))],
+                key="dag_nodes",
+                placeholder="Elegí opciones",
+            )
             roles = {}
             if nodes:
                 rc1, rc2 = st.columns(2)
@@ -929,14 +1219,20 @@ def main():
                 render_interactive_dag(nodes, st.session_state["dag_edges"], roles)
 
     with tabs[7]:
+        st.caption("¿Para qué sirve? Ver si dos planillas (ej. enero vs febrero) cambiaron de forma.")
         st.subheader("Comparar dos archivos")
         if len(tables) < 2:
-            st.info("Cargá al menos dos archivos, o usá un split de demo.")
-            frac = st.slider("Split aleatorio", 0.1, 0.9, 0.5)
-            if st.button("Comparar split aleatorio"):
-                a = df.sample(frac=frac, random_state=42)
-                b = df.drop(a.index)
-                st.session_state["drift"] = compare_datasets(a, b, "split_a", "split_b")
+            st.info("Cargá al menos dos archivos para compararlos de verdad.")
+            with st.expander("Probar con una demo (partir este archivo al azar)"):
+                st.caption(
+                    "Parte la tabla actual en dos mitades al azar solo para probar la pantalla. "
+                    "No reemplaza comparar dos archivos reales."
+                )
+                frac = st.slider("Proporción de la primera mitad", 0.1, 0.9, 0.5)
+                if st.button("Comparar mitades de demo"):
+                    a = df.sample(frac=frac, random_state=42)
+                    b = df.drop(a.index)
+                    st.session_state["drift"] = compare_datasets(a, b, "split_a", "split_b")
         else:
             a_name = st.selectbox("Dataset A", names, key="drift_a")
             b_name = st.selectbox("Dataset B", [n for n in names if n != a_name] or names, key="drift_b")
@@ -944,26 +1240,37 @@ def main():
                 st.session_state["drift"] = compare_datasets(tables[a_name], tables[b_name], a_name, b_name)
         drift = st.session_state.get("drift")
         if drift:
+            from estacion.ux.result_views import rename_df_columns_es
+
             st.write(drift.get("interpretation"))
             st.write(f"Columnas con cambio detectado: {drift.get('n_drifted', 0)}")
-            st.dataframe(pd.DataFrame(drift["column_tests"]), width="stretch")
+            st.dataframe(
+                rename_df_columns_es(pd.DataFrame(drift["column_tests"])),
+                width="stretch",
+                hide_index=True,
+            )
 
     with tabs[8]:
+        st.caption("¿Para qué sirve? Bajar el informe y guardar el análisis para más tarde.")
         _render_informe(df, selected, store)
-        st.subheader("Comparar dos sesiones")
+        st.subheader("Comparar dos análisis guardados")
         sessions = store.list_sessions()
         if len(sessions) < 2:
-            st.caption("Guardá al menos dos sesiones para comparar.")
+            st.caption("Guardá al menos dos análisis para compararlos.")
         else:
             labels = {f"{s['name']} ({s['id']})": s["id"] for s in sessions}
-            a = st.selectbox("Sesión A", list(labels), key="cmp_a")
-            b = st.selectbox("Sesión B", [x for x in labels if x != a] or list(labels), key="cmp_b")
-            if st.button("Comparar sesiones"):
+            a = st.selectbox("Análisis A", list(labels), key="cmp_a")
+            b = st.selectbox("Análisis B", [x for x in labels if x != a] or list(labels), key="cmp_b")
+            if st.button("Comparar análisis"):
                 la = store.load(labels[a])
                 lb = store.load(labels[b])
                 titles_a = {f["title"] for f in la["findings"]}
                 titles_b = {f["title"] for f in lb["findings"]}
-                st.write(f"Comunes: {len(titles_a & titles_b)} | Solo A: {len(titles_a - titles_b)} | Solo B: {len(titles_b - titles_a)}")
+                st.write(
+                    f"Comunes: {len(titles_a & titles_b)} | "
+                    f"Solo A: {len(titles_a - titles_b)} | "
+                    f"Solo B: {len(titles_b - titles_a)}"
+                )
 
 
 if __name__ == "__main__":

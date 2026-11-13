@@ -1,5 +1,22 @@
 # Funcionalidades pendientes / limitaciones conocidas
 
+## Completado en v0.6.2 (UX v2 — segunda revisión)
+
+Según `prompt_para_cursor.md` / informe UX v2:
+
+1. Persistencia del demo "Probar con un ejemplo de ventas" (bug portada)
+2. Subir archivo visible desde la portada
+3. Resumen en lenguaje simple sin jerga
+4. Descubrimientos primero + problemas agrupados/deduplicados
+5. Tarjetas sin jerga en el texto principal
+6. Sin None/nan/decimales largos en UI e informe
+7. PDF en un clic + sesión explicada
+8. Casos borde de carga (pocas filas / inválido)
+9. Modo avanzado traducido (pestañas, encabezados, placeholders)
+10. Follow-up post-PR#1: Analizar en main, quitar archivo, parse inválido, informe/causal/tablas pulidos
+11. Follow-up retest 1391316: repair tras inválido; ocultar Datos listos al Analizar; preview —; tablas ES + coma; informe Relación/Crítico + Sí/No
+12. Polish final: enteros es-AR; aviso carga único; Perfil/Faltantes; métodos informe en español claro
+
 ## Completado en v0.6.1 (UX — informe completo)
 
 Implementado según `docs/estacion_ux/informe_ux.md` (mejoras 1–17):
