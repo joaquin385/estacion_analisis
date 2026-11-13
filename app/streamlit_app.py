@@ -157,6 +157,9 @@ def _clear_loaded_data() -> None:
         "quality_domain",
         WELCOME_UPLOAD_KEY,
         "sidebar_uploaded_files",
+        "repair_uploaded_files",
+        "_prefer_loaded_upload",
+        "_run_analyze",
         "_pdf_bytes_keys",
     ):
         st.session_state.pop(k, None)
@@ -178,15 +181,37 @@ DEMO_LABELS = {
 DOMAIN_LABELS = {k: ("General" if k == "default" else k.capitalize()) for k in DOMAIN_PRESETS}
 
 
+def _read_upload_bytes(f) -> bytes:
+    """Leer bytes de un UploadedFile rebobinando el buffer (Streamlit no siempre resetea)."""
+    if hasattr(f, "seek"):
+        try:
+            f.seek(0)
+        except Exception:
+            pass
+    data = f.read() if hasattr(f, "read") else b""
+    if not data and hasattr(f, "getvalue"):
+        try:
+            data = f.getvalue()
+        except Exception:
+            data = b""
+    return data or b""
+
+
 def _load_uploaded(files) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
     tables = {}
     metas = {}
     for f in files:
-        data = f.read()
+        data = _read_upload_bytes(f)
         df, meta = load_table(data, name=Path(f.name).stem)
         tables[meta["name"]] = df
         metas[meta["name"]] = meta
     return tables, metas
+
+
+def _apply_uploaded_tables(tables: dict, metas: dict) -> None:
+    st.session_state["loaded_tables"] = tables
+    st.session_state["load_metas"] = metas
+    st.session_state["load_source"] = "upload"
 
 
 @st.cache_data(show_spinner=False)
@@ -421,16 +446,14 @@ def main():
     tables: dict[str, pd.DataFrame] = {}
     load_metas: dict[str, dict] = {}
 
-    # Persistimos tablas cargadas fuera de las keys de widgets: Streamlit limpia
-    # el estado de un file_uploader cuando deja de renderizarse (p.ej. al salir
-    # de la portada).
+    # Prioridad de carga:
+    # 1) reparación ("Subir otro archivo") — gana sobre el inválido de la portada
+    # 2) sidebar
+    # 3) portada
+    # 4) tablas ya parseadas en session_state
+    # Siempre seek(0) al leer: si no, un re-read tras rerun devuelve vacío.
+    repair_files = st.session_state.get("repair_uploaded_files") or []
     welcome_uploaded = st.session_state.get(WELCOME_UPLOAD_KEY) or []
-    upload_files = uploaded or welcome_uploaded
-    if upload_files:
-        tables, load_metas = _load_uploaded(upload_files)
-        st.session_state["loaded_tables"] = tables
-        st.session_state["load_metas"] = load_metas
-        st.session_state["load_source"] = "upload"
 
     if pick_session and pick_session != "—":
         sid = pick_session.rsplit("(", 1)[-1].rstrip(")")
@@ -472,8 +495,20 @@ def main():
             st.session_state["loaded_tables"] = tables
             st.session_state["load_source"] = "session"
             st.sidebar.success(f"Sesión {sid} cargada")
-    elif upload_files:
-        pass  # ya cargado arriba; tiene prioridad sobre el demo
+    elif repair_files:
+        tables, load_metas = _load_uploaded(repair_files)
+        _apply_uploaded_tables(tables, load_metas)
+        # El inválido de la portada no debe volver a pisar este resultado.
+        st.session_state.pop(WELCOME_UPLOAD_KEY, None)
+        st.session_state["_prefer_loaded_upload"] = True
+    elif uploaded:
+        tables, load_metas = _load_uploaded(uploaded)
+        _apply_uploaded_tables(tables, load_metas)
+        st.session_state.pop("repair_uploaded_files", None)
+        st.session_state.pop("_prefer_loaded_upload", None)
+    elif welcome_uploaded and not st.session_state.get("_prefer_loaded_upload"):
+        tables, load_metas = _load_uploaded(welcome_uploaded)
+        _apply_uploaded_tables(tables, load_metas)
     elif demo and demo != "—":
         path = ROOT / "data" / "synthetic" / f"{demo}.csv"
         if path.exists():
@@ -486,8 +521,7 @@ def main():
         else:
             st.warning("Dataset de ejemplo no generado. Ejecutá: python -m data.synthetic.generate_datasets")
     elif st.session_state.get("loaded_tables") and st.session_state.get("load_source") == "upload":
-        # El file_uploader de portada deja de renderizarse y Streamlit limpia su key;
-        # recuperamos las tablas ya parseadas.
+        # Recuperar tablas ya parseadas (p.ej. tras salir de la portada o tras reparar).
         tables = st.session_state["loaded_tables"]
         load_metas = st.session_state.get("load_metas") or {}
 
@@ -504,6 +538,8 @@ def main():
 
     def _on_clear_upload() -> None:
         st.session_state["_reset_uploads"] = True
+        st.session_state.pop("repair_uploaded_files", None)
+        st.session_state.pop("_prefer_loaded_upload", None)
 
     if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
         with st.expander(
@@ -529,13 +565,7 @@ def main():
                     key="repair_uploaded_files",
                     help="Elegí otro CSV o Excel con separador correcto.",
                 )
-            repair = st.session_state.get("repair_uploaded_files") or []
-            if repair:
-                tables, load_metas = _load_uploaded(repair)
-                st.session_state["loaded_tables"] = tables
-                st.session_state["load_metas"] = load_metas
-                st.session_state["load_source"] = "upload"
-                st.rerun()
+            # El próximo run prioriza repair_uploaded_files arriba y descarta el inválido.
             st.stop()
 
     if len(tables) > 1 and advanced:
@@ -545,18 +575,28 @@ def main():
             st.dataframe(pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(), width="stretch")
 
     auto_once = st.session_state.pop("_auto_analyze_once", False)
-    main_analyze = False
-    if not _analysis_ready(selected, quality_domain) and not (run_btn or auto_once):
+    run_analyze_now = bool(
+        run_btn or auto_once or st.session_state.pop("_run_analyze", False)
+    )
+
+    def _on_main_analyze() -> None:
+        st.session_state["_run_analyze"] = True
+
+    if not _analysis_ready(selected, quality_domain) and not run_analyze_now:
         st.info("Datos listos. Pulsá **Analizar** para generar el resumen.")
-        main_analyze = st.button(
+        st.button(
             "Analizar",
             type="primary",
             key="main_analyze_btn",
             help="Corre el análisis automático sobre la planilla cargada.",
+            on_click=_on_main_analyze,
         )
-        st.dataframe(df.head(12), width="stretch")
+        from estacion.ux.presentation import dataframe_for_display
 
-    if run_btn or main_analyze or auto_once:
+        st.dataframe(dataframe_for_display(df.head(12)), width="stretch")
+        return
+
+    if run_analyze_now:
         _run_discovery(df, selected, quality_domain, use_ollama)
 
     if not _analysis_ready(selected, quality_domain):
@@ -742,7 +782,13 @@ def main():
         qres = evaluate_quality_rules(df, custom_rules)
         st.write(f"**Violaciones:** {qres['n_violations']} (críticas: {qres['n_critical']})")
         if qres.get("violations"):
-            st.dataframe(pd.DataFrame(qres["violations"]), width="stretch")
+            from estacion.ux.result_views import rename_df_columns_es
+
+            st.dataframe(
+                rename_df_columns_es(pd.DataFrame(qres["violations"])),
+                width="stretch",
+                hide_index=True,
+            )
 
         st.subheader("Plugins de dominio")
         plugs = list_plugins()

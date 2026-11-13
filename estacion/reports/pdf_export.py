@@ -146,6 +146,9 @@ def generate_pdf_report(
                     humanize_finding,
                     format_magnitude,
                     evidence_pairs_plain,
+                    CATEGORY_LABELS_ES,
+                    SEVERITY_LABELS_ES,
+                    bool_es,
                 )
 
                 h = humanize_finding(f)
@@ -153,16 +156,30 @@ def generate_pdf_report(
                 mag = format_magnitude(f.magnitude, finding=f)
                 obs = h["what"]
                 ev_lines = [f"- {k}: {v}" for k, v in evidence_pairs_plain(f.evidence)]
+                cat = CATEGORY_LABELS_ES.get(f.category.value, f.category.value)
+                sev = SEVERITY_LABELS_ES.get(f.severity.value, f.severity.value)
+                sig_line = None
+                if f.statistically_significant is not None:
+                    sig_line = f"Estadísticamente significativo: {bool_es(f.statistically_significant)}"
+                prac_line = None
+                if f.practically_important is not None:
+                    prac_line = f"Prácticamente importante: {bool_es(f.practically_important)}"
             except Exception:
                 title = f.title
                 mag = str(f.magnitude)
                 obs = f.observation
                 ev_lines = []
+                cat = f.category.value
+                sev = f.severity.value
+                sig_line = None
+                prac_line = None
             text = [
                 title,
-                f"Categoría: {f.category.value} | Severidad: {f.severity.value} | Score: {f.score:.0f}",
+                f"Categoría: {cat} | Severidad: {sev} | Score: {f.score:.0f}",
                 f"Magnitud: {mag}",
                 f"Método: {f.method}",
+                *([sig_line] if sig_line else []),
+                *([prac_line] if prac_line else []),
                 "",
                 "Observación:",
                 obs,

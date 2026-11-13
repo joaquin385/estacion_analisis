@@ -38,6 +38,9 @@ FIELD_LABELS_ES = {
     "ok": "Ok",
     "n_missing": "Nº vacíos",
     "missing_pct": "% vacíos",
+    "missing_pct_a": "% vacíos A",
+    "missing_pct_b": "% vacíos B",
+    "missing_delta": "Δ % vacíos",
     "missing": "Vacíos",
     "significant_fdr": "Significativo (corregido)",
     "method": "Método",
@@ -63,6 +66,24 @@ FIELD_LABELS_ES = {
     "kurtosis": "Curtosis",
     "alpha": "Alfa",
     "variable": "Variable",
+    "rule": "Regla",
+    "severity": "Severidad",
+    "detail": "Detalle",
+    "value": "Valor",
+    "threshold": "Umbral",
+    "n_observed": "N observado",
+    "n_observed_vars": "Variables observadas",
+    "missing_col": "Columna con vacíos",
+    "predictor": "Predictor",
+    "effect": "Efecto / diferencia",
+    "missing_rate_target": "% vacíos (objetivo)",
+    "reason": "Motivo",
+    "campo": "Campo",
+    "valor": "Valor",
+    "df": "Grados de libertad",
+    "reject_mcar_alpha05": "Se rechaza al azar (α=0,05)",
+    "n_patterns_used": "Patrones usados",
+    "pattern": "Patrón",
 }
 
 
@@ -76,8 +97,28 @@ METHOD_LABELS_ES = {
     "wilson": "Wilson",
     "welch_t": "Prueba t de Welch",
     "mannwhitney_u": "Mann–Whitney",
+    "mannwhitney_missing_vs_observed": "Mann–Whitney (vacío vs observado)",
+    "chi2_missing_indicator": "Chi-cuadrado (indicador de vacío)",
     "kruskal_wallis": "Kruskal–Wallis",
     "anova_oneway": "ANOVA",
+    "little_mcar": "Prueba de Little (faltantes al azar)",
+}
+
+RULE_LABELS_ES = {
+    "max_duplicate_pct": "Máx. % de filas repetidas",
+    "max_missing_pct": "Máx. % de vacíos",
+    "max_iqr_outlier_pct": "Máx. % de valores extremos (IQR)",
+    "max_dominant_category_pct": "Máx. % de categoría dominante",
+    "non_negative_columns": "Columnas no negativas",
+    "id_columns_must_be_unique": "IDs únicos",
+    "forbidden_sentinel_values": "Valores trampa",
+}
+
+SEVERITY_VALUE_ES = {
+    "info": "Info",
+    "interesting": "Interesante",
+    "notable": "Notable",
+    "critical": "Crítico",
 }
 
 TYPE_LABELS_ES = {
@@ -123,6 +164,14 @@ def dict_to_table(d: dict[str, Any], exclude: set[str] | None = None) -> pd.Data
         label = _label_field(str(k))
         if k in {"pvalue", "p_value", "p_fdr", "p_raw"}:
             rows.append({"campo": label, "valor": format_p_value(v if isinstance(v, (int, float)) else None)})
+        elif k in {"method"}:
+            rows.append({"campo": label, "valor": METHOD_LABELS_ES.get(str(v), v)})
+        elif k in {"rule"}:
+            rows.append({"campo": label, "valor": RULE_LABELS_ES.get(str(v), v)})
+        elif k in {"severity"}:
+            rows.append({"campo": label, "valor": SEVERITY_VALUE_ES.get(str(v), v)})
+        elif k in {"reason"}:
+            rows.append({"campo": "Motivo", "valor": display_value(v)})
         else:
             rows.append({"campo": label, "valor": _fmt_val(v)})
     return pd.DataFrame(rows)
@@ -135,19 +184,40 @@ def rename_df_columns_es(df: pd.DataFrame) -> pd.DataFrame:
     out = df.rename(columns=mapping)
     for col in list(out.columns):
         cl = str(col).lower()
+        original = next((k for k, v in mapping.items() if v == col), col)
+        ol = str(original).lower()
         if col in {"Método", "method", "Method"} or cl == "método":
             out[col] = out[col].map(lambda x: METHOD_LABELS_ES.get(str(x), x))
         if col in {"Tipo", "type", "Type"} or cl == "tipo":
             out[col] = out[col].map(lambda x: TYPE_LABELS_ES.get(str(x), x))
+        if col in {"Regla", "rule"} or ol == "rule":
+            out[col] = out[col].map(lambda x: RULE_LABELS_ES.get(str(x), x))
+        if col in {"Severidad", "severity"} or ol == "severity":
+            out[col] = out[col].map(lambda x: SEVERITY_VALUE_ES.get(str(x), x))
         if "p-valor" in cl or cl in {"p-valor", "p corregido", "p sin corregir"}:
             out[col] = out[col].map(
                 lambda x: format_p_value(float(x)) if isinstance(x, (int, float)) else display_value(x)
             )
-        if "% vacíos" in str(col) or "missing_pct" in cl or cl.endswith("pct"):
+        if (
+            "% vacíos" in str(col)
+            or "missing_pct" in ol
+            or ol.endswith("pct")
+            or "missing_rate" in ol
+            or ol == "missing_delta"
+            or "Δ % vacíos" in str(col)
+        ):
             out[col] = out[col].map(
                 lambda x: format_pct(float(x), digits=1) if isinstance(x, (int, float)) else display_value(x)
             )
-    return dataframe_for_display(out)
+        if ol in {"value", "threshold", "effect"} or col in {"Valor", "Umbral", "Efecto / diferencia"}:
+            out[col] = out[col].map(
+                lambda x: (
+                    format_pct(float(x), digits=1)
+                    if isinstance(x, (int, float)) and abs(float(x)) <= 1
+                    else display_value(x)
+                )
+            )
+    return dataframe_for_display(out, format_numbers=True)
 
 
 def descriptive_table_es(report: dict[str, Any]) -> pd.DataFrame:

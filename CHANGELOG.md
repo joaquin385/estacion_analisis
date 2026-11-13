@@ -12,6 +12,10 @@
 - Follow-up: Analizar en el área principal; quitar archivo / volver al inicio; parse inválido con un solo aviso y “Subir otro”
 - Informe sin dump crudo de evidencia; brecha de grupos unificada (extremo vs resto); relaciones no FDR como “no confirmada”
 - Causal sin `p = <`; tablas Perfil/Faltantes/Comparar traducidas; `None` → `—`
+- Fix merge: “Subir otro archivo” tras parse inválido (seek + prioridad repair; AppTest)
+- Tras Analizar, se ocultan “Datos listos” / preview / botón en el mismo run
+- Preview sin `None` en celdas vacías; tablas avanzadas (reglas, faltantes, drift) + decimales coma
+- Informe MD/PDF: categoría/severidad en español; Sí/No en vez de True/False
 
 ## v0.6.1 — UX (2026-11-12)
 

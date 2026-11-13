@@ -53,6 +53,7 @@ SUMMARY_FORBIDDEN = (
 
 
 def format_number(x: Any, digits: int = 2) -> str:
+    """Número con decimal coma (es-AR). Miles con espacio fino."""
     if x is None:
         return "—"
     try:
@@ -65,10 +66,42 @@ def format_number(x: Any, digits: int = 2) -> str:
             return "—"
         return s
     if abs(v) >= 1000:
-        return f"{v:,.1f}".replace(",", " ")
-    if abs(v) >= 10:
-        return f"{v:.{digits}f}"
-    return f"{v:.{max(digits, 2)}f}".rstrip("0").rstrip(".") if digits >= 2 else f"{v:.{digits}g}"
+        return f"{v:,.1f}".replace(",", " ").replace(".", ",")
+    d = max(digits, 2) if abs(v) < 10 else digits
+    raw = f"{v:.{d}f}"
+    # quitar ceros sobrantes pero conservar al menos un decimal si digits>=2 y |v|<10
+    if abs(v) < 10 and d >= 2:
+        raw = raw.rstrip("0").rstrip(".")
+        if "." not in raw and digits >= 1:
+            raw = f"{v:.0f}"
+    return raw.replace(".", ",")
+
+
+def bool_es(x: Any) -> str:
+    if x is True:
+        return "Sí"
+    if x is False:
+        return "No"
+    return "—"
+
+
+CATEGORY_LABELS_ES = {
+    "quality": "Calidad",
+    "distribution": "Distribución",
+    "relationship": "Relación",
+    "temporal": "Temporal",
+    "segment": "Segmentación",
+    "anomaly": "Anomalía",
+    "causal": "Causal",
+    "statistical": "Estadística",
+}
+
+SEVERITY_LABELS_ES = {
+    "info": "Info",
+    "interesting": "Interesante",
+    "notable": "Notable",
+    "critical": "Crítico",
+}
 
 
 def format_pct(x: float | None, digits: int = 0) -> str:
@@ -114,11 +147,16 @@ def format_n_rows(n: int) -> str:
 
 
 def display_value(x: Any, *, pct_if_unit: bool = False) -> Any:
-    """None/nan → '—'; redondea floats."""
+    """None/nan → '—'; redondea floats con coma decimal."""
     if x is None:
         return "—"
+    try:
+        if pd.isna(x):
+            return "—"
+    except Exception:
+        pass
     if isinstance(x, bool):
-        return "Sí" if x else "No"
+        return bool_es(x)
     if isinstance(x, float):
         if math.isnan(x) or math.isinf(x):
             return "—"
@@ -134,15 +172,37 @@ def dataframe_for_display(
     df: pd.DataFrame,
     *,
     percent_cols: set[str] | None = None,
+    format_numbers: bool = False,
 ) -> pd.DataFrame:
-    """Copia amigable: None/nan → —, % unitarios, sin bool crudos feos."""
+    """Copia amigable: None/nan/NaT → —, % unitarios, sin bool crudos feos."""
     if df is None or getattr(df, "empty", True):
         return df
     percent_cols = {c.lower() for c in (percent_cols or set())}
     out = df.copy()
     for col in out.columns:
         is_pct = str(col).lower() in percent_cols or "pct" in str(col).lower() or "%" in str(col)
-        out[col] = out[col].map(lambda v, p=is_pct: display_value(v, pct_if_unit=p))
+
+        def _cell(v, p=is_pct):
+            if v is None:
+                return "—"
+            try:
+                if pd.isna(v):
+                    return "—"
+            except Exception:
+                pass
+            if isinstance(v, str) and v.lower() in {"none", "nan", "null"}:
+                return "—"
+            if isinstance(v, bool):
+                return bool_es(v)
+            if format_numbers and isinstance(v, (int, float)) and not isinstance(v, bool):
+                return display_value(v, pct_if_unit=p)
+            if p and isinstance(v, (int, float)) and not isinstance(v, bool):
+                return format_pct(float(v), digits=1)
+            if isinstance(v, float):
+                return format_number(v, digits=4 if abs(v) < 1 else 2)
+            return v
+
+        out[col] = out[col].map(_cell)
     return out
 
 

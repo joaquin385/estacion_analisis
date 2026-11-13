@@ -185,3 +185,72 @@ def test_format_p_clause_and_rows():
     assert format_p_clause(0.12) == "p = 0,120"
     assert format_n_rows(1) == "1 fila"
     assert "filas" in format_n_rows(3)
+
+
+def test_report_category_severity_and_bools_es(commercial_pack):
+    from estacion.reports.generator import generate_markdown_report
+
+    _, findings, profile, artifacts = commercial_pack
+    md = generate_markdown_report(profile, findings, artifacts)
+    assert "relationship / critical" not in md
+    assert "Relación / Crítico" in md
+    assert "Estadísticamente significativo:** True" not in md
+    assert "Estadísticamente significativo:** Sí" in md
+
+
+def test_dataframe_none_to_dash():
+    import pandas as pd
+    from estacion.ux.presentation import dataframe_for_display
+
+    df = pd.DataFrame({"discount": [0.1, None, float("nan")], "x": [1, 2, 3]})
+    out = dataframe_for_display(df)
+    assert list(out["discount"]) == ["0,1", "—", "—"]
+
+
+def test_invalid_then_valid_repair_apptest():
+    """Archivo inválido → Subir otro (válido) debe cargar la tabla sin error vacío."""
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    bad = (
+        b"columna_unica\n"
+        + b"\n".join(f"fila{i};con;puntos;y;coma".encode() for i in range(8))
+    )
+    good = (ROOT / "data" / "synthetic" / "commercial.csv").read_bytes()
+    # CSV español ; / decimal ,
+    ar = (
+        "fecha;sucursal;ventas\n"
+        "2024-01-01;Norte;100,5\n"
+        "2024-01-02;Sur;200,0\n"
+        "2024-01-03;Este;150,25\n"
+    ).encode("utf-8")
+
+    at = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=120)
+    at.run()
+    welcome = next(u for u in at.file_uploader if "welcome" in (u.key or ""))
+    welcome.set_value(("bad.csv", bad, "text/csv")).run(timeout=120)
+    metas = at.session_state.get("load_metas") or {}
+    assert any(m.get("suspicious_parse") for m in metas.values())
+
+    repair = next(u for u in at.file_uploader if "otro" in (u.label or "").lower())
+    repair.set_value(("commercial.csv", good, "text/csv")).run(timeout=180)
+    tables = at.session_state.get("loaded_tables") or {}
+    assert tables
+    df = next(iter(tables.values()))
+    assert df.shape[1] >= 2
+    assert df.shape[0] > 10
+    metas2 = at.session_state.get("load_metas") or {}
+    assert not any(m.get("suspicious_parse") and m.get("n_cols") == 1 for m in metas2.values())
+    # No quedó un dataframe vacío por read() sin seek
+    assert df.shape[0] > 0
+
+    # También con CSV argentino vía repair (reinicio del flujo)
+    at2 = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=120)
+    at2.run()
+    welcome2 = next(u for u in at2.file_uploader if "welcome" in (u.key or ""))
+    welcome2.set_value(("bad.csv", bad, "text/csv")).run(timeout=120)
+    repair2 = next(u for u in at2.file_uploader if "otro" in (u.label or "").lower())
+    repair2.set_value(("ar.csv", ar, "text/csv")).run(timeout=120)
+    df2 = next(iter((at2.session_state.get("loaded_tables") or {}).values()))
+    assert list(df2.columns) == ["fecha", "sucursal", "ventas"]
+    assert float(df2["ventas"].iloc[0]) == 100.5

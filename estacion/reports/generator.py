@@ -109,14 +109,22 @@ def generate_markdown_report(
             pairs = []
         lines.append(f"### {title}")
         lines.append("")
+        from estacion.ux.presentation import (
+            CATEGORY_LABELS_ES,
+            SEVERITY_LABELS_ES,
+            bool_es,
+        )
+
+        cat = CATEGORY_LABELS_ES.get(f.category.value, f.category.value)
+        sev = SEVERITY_LABELS_ES.get(f.severity.value, f.severity.value)
         lines.append(f"- **Qué se observó:** {obs}")
         lines.append(f"- **Magnitud:** {mag}")
         lines.append(f"- **Método:** {f.method}")
-        lines.append(f"- **Categoría / severidad:** {f.category.value} / {f.severity.value}")
+        lines.append(f"- **Categoría / severidad:** {cat} / {sev}")
         if f.statistically_significant is not None:
-            lines.append(f"- **Estadísticamente significativo:** {f.statistically_significant}")
+            lines.append(f"- **Estadísticamente significativo:** {bool_es(f.statistically_significant)}")
         if f.practically_important is not None:
-            lines.append(f"- **Prácticamente importante:** {f.practically_important}")
+            lines.append(f"- **Prácticamente importante:** {bool_es(f.practically_important)}")
         if pairs:
             lines.append("- **Evidencia (clave):**")
             for k, v in pairs:

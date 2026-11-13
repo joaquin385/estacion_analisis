@@ -14,6 +14,7 @@ Según `prompt_para_cursor.md` / informe UX v2:
 8. Casos borde de carga (pocas filas / inválido)
 9. Modo avanzado traducido (pestañas, encabezados, placeholders)
 10. Follow-up post-PR#1: Analizar en main, quitar archivo, parse inválido, informe/causal/tablas pulidos
+11. Follow-up retest 1391316: repair tras inválido; ocultar Datos listos al Analizar; preview —; tablas ES + coma; informe Relación/Crítico + Sí/No
 
 ## Completado en v0.6.1 (UX — informe completo)
 
