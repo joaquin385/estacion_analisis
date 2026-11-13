@@ -108,6 +108,7 @@ def test_business_kpis(commercial_pack):
     assert kpis[0]["value"] == "3.060"
     assert kpis[1]["value"].startswith("$")
     assert "11" in kpis[2]["delta"]
+    assert "revisados" in kpis[2]["delta"]
 
 
 def test_finding_copy_uses_engine_numbers(commercial_pack):
@@ -266,7 +267,43 @@ def test_theme_inter_configured():
     assert "font-family: Inter" in css
     assert "stIconMaterial" in css
     assert "Material Symbols" in css
-    assert "stHeader" in css
-    assert "Descargar PDF" in css or "Descargar PDF" in (ROOT / "app" / "streamlit_app.py").read_text(
-        encoding="utf-8"
+    # Header no se oculta por completo: debe quedar el control de sidebar
+    assert "stSidebarCollapsedControl" in css
+    assert "display: none !important;" not in css.split("stHeader")[1].split("stSidebarCollapsedControl")[0]
+    assert "Descargar PDF" in (ROOT / "app" / "streamlit_app.py").read_text(encoding="utf-8")
+
+
+def test_kpi_captions_plain_words(commercial_pack):
+    df, findings, profile, _, ctx = commercial_pack
+    kpis = build_business_kpis(findings, profile, df, ctx)
+    deltas = " | ".join(k["delta"] for k in kpis)
+    assert "columnas" in deltas
+    assert "mediana" in deltas
+    assert "revisados" in deltas
+    assert "1 de cada" in deltas or "filas" in deltas
+    assert "cols." not in deltas
+    assert "med." not in deltas
+
+
+def test_sidebar_controls_reachable_apptest():
+    """Modo avanzado y unidad monetaria deben ser alcanzables vía sidebar."""
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=120)
+    at.run()
+    # Controles viven en la sidebar (no dependen de CSS, pero deben existir)
+    toggles = [t for t in at.sidebar.toggle if "avanzado" in (t.label or "").lower()]
+    assert toggles, "no está el toggle Modo avanzado en la sidebar"
+    toggles[0].set_value(True).run(timeout=120)
+    assert at.sidebar.toggle[0].value is True or any(
+        t.value for t in at.sidebar.toggle if "avanzado" in (t.label or "").lower()
     )
+    units = [
+        s
+        for s in at.sidebar.selectbox
+        if "unidad" in (s.label or "").lower() or "monetar" in (s.label or "").lower()
+    ]
+    assert units, "no está el selector de unidad monetaria"
+    units[0].set_value("unidades").run(timeout=120)
+    assert at.session_state.get("money_unit_override") == "unidades"

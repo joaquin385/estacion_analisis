@@ -149,16 +149,30 @@ label {
   line-height: 1.5;
 }
 .stApp { background: #F6F8FB; color: #0F172A; }
-/* Una sola marca: ocultar header nativo de Streamlit */
-header[data-testid="stHeader"] { display: none !important; }
-/* Evitar que el toggle colapsado filtre el nombre del glifo como texto */
-[data-testid="stSidebarCollapsedControl"] {
-  width: 2.25rem !important;
-  overflow: hidden !important;
+/* Header mínimo pero VISIBLE: ahí vive el botón que abre la sidebar */
+header[data-testid="stHeader"] {
+  background: rgba(246, 248, 251, 0.92) !important;
+  border-bottom: 1px solid #E5E9F0 !important;
+  box-shadow: none !important;
 }
-[data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"] {
+/* Ocultar solo decoración de toolbar; nunca el control de sidebar */
+header[data-testid="stHeader"] [data-testid="stToolbarActions"],
+header[data-testid="stHeader"] [data-testid="stAppDeployButton"],
+header[data-testid="stHeader"] #MainMenu {
+  display: none !important;
+}
+[data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"] button[kind="header"] {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+[data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"],
+header[data-testid="stHeader"] [data-testid="stIconMaterial"] {
   font-size: 1.35rem !important;
   line-height: 1 !important;
+  color: #334155 !important;
 }
 h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 700 !important; }
 .brand {
@@ -249,17 +263,20 @@ div[data-testid="stMetricLabel"] {
 /* Caption dentro de la card: delta gris, sin flecha, sin truncar */
 div[data-testid="stMetricDelta"] {
   color: #64748B !important;
-  font-size: 0.8rem !important;
+  font-size: 0.78rem !important;
   white-space: normal !important;
   overflow: visible !important;
   text-overflow: unset !important;
   max-width: 100% !important;
+  line-height: 1.25 !important;
 }
 div[data-testid="stMetricDelta"] p,
-div[data-testid="stMetricDelta"] span {
+div[data-testid="stMetricDelta"] span,
+div[data-testid="stMetricDelta"] > div {
   white-space: normal !important;
   overflow: visible !important;
   text-overflow: unset !important;
+  line-height: 1.25 !important;
 }
 div[data-testid="stMetricDelta"] svg { display: none !important; }
 div[data-testid="stMetricDelta"] [data-testid="stMetricDeltaIcon-Up"],
@@ -583,12 +600,23 @@ def _render_informe(df, selected, store, ctx=None):
     st.markdown(generate_markdown_report(profile, findings, artifacts, ctx=ctx)[:4000])
 
 
-def _render_topbar(*, show_actions: bool = False, df=None, selected: str | None = None, ctx=None) -> None:
+def _render_topbar(
+    *,
+    show_clear: bool = False,
+    show_pdf: bool = False,
+    df=None,
+    selected: str | None = None,
+    ctx=None,
+) -> None:
     """Barra superior compacta: marca + acciones (maqueta A)."""
-    left, mid, right = st.columns([3.2, 1.15, 1.25])
+    if show_clear or show_pdf:
+        left, mid, right = st.columns([3.2, 1.15, 1.25])
+    else:
+        left, mid, right = st.columns([1.0]), None, None
+        left = left[0]
     with left:
         st.markdown('<div class="brand ea-topbar">Estación de Análisis</div>', unsafe_allow_html=True)
-    if not show_actions:
+    if not show_clear and not show_pdf:
         return
 
     def _on_clear() -> None:
@@ -596,26 +624,28 @@ def _render_topbar(*, show_actions: bool = False, df=None, selected: str | None 
         st.session_state.pop("repair_uploaded_files", None)
         st.session_state.pop("_prefer_loaded_upload", None)
 
-    with mid:
-        st.button("Subir otro archivo", on_click=_on_clear, key="top_clear_upload", width="stretch")
-    with right:
-        profile = st.session_state.get("profile")
-        findings = st.session_state.get("findings")
-        artifacts = st.session_state.get("artifacts", {})
-        if profile is not None and findings is not None and df is not None and selected:
-            try:
-                data = _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=ctx)
-                st.download_button(
-                    "Descargar PDF",
-                    data=data,
-                    file_name=f"{selected}_informe.pdf",
-                    mime="application/pdf",
-                    type="primary",
-                    key="pdf_dl_topbar",
-                    width="stretch",
-                )
-            except Exception:
-                st.caption("PDF no disponible")
+    if show_clear and mid is not None:
+        with mid:
+            st.button("Subir otro archivo", on_click=_on_clear, key="top_clear_upload", width="stretch")
+    if show_pdf and right is not None:
+        with right:
+            profile = st.session_state.get("profile")
+            findings = st.session_state.get("findings")
+            artifacts = st.session_state.get("artifacts", {})
+            if profile is not None and findings is not None and df is not None and selected:
+                try:
+                    data = _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=ctx)
+                    st.download_button(
+                        "Descargar PDF",
+                        data=data,
+                        file_name=f"{selected}_informe.pdf",
+                        mime="application/pdf",
+                        type="primary",
+                        key="pdf_dl_topbar",
+                        width="stretch",
+                    )
+                except Exception:
+                    st.caption("PDF no disponible")
 
 
 def _build_copy_context(df, profile, selected: str):
@@ -791,7 +821,7 @@ def main():
         load_metas = st.session_state.get("load_metas") or {}
 
     if not tables:
-        _render_topbar(show_actions=False)
+        _render_topbar()
         render_welcome(demo_select_key=DEMO_SELECT_KEY)
         return
 
@@ -802,59 +832,46 @@ def main():
     from_upload = st.session_state.get("load_source") == "upload"
     bad_parse = bool(meta.get("suspicious_parse") and meta.get("n_cols") == 1)
 
-    def _on_clear_upload() -> None:
-        st.session_state["_reset_uploads"] = True
-        st.session_state.pop("repair_uploaded_files", None)
-        st.session_state.pop("_prefer_loaded_upload", None)
-
     auto_once = st.session_state.pop("_auto_analyze_once", False)
     run_analyze_now = bool(
         run_btn or auto_once or st.session_state.pop("_run_analyze", False)
     )
-    # Una sola marca: no duplicar topbar si este run va a analizar / ya está listo
-    if not _analysis_ready(selected, quality_domain) and not run_analyze_now:
-        _render_topbar(show_actions=False)
-    show_analyze_prompt = not _analysis_ready(selected, quality_domain) and not run_analyze_now
+    analysis_ready = _analysis_ready(selected, quality_domain)
+    show_analyze_prompt = not analysis_ready and not run_analyze_now
     # Evitar tabla duplicada: expander (mensajes) + preview bajo Analizar.
     preview_table_in_expander = not (from_upload and show_analyze_prompt and not bad_parse)
 
-    if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
-        with st.expander(
-            "Vista previa de la carga",
-            expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1,
-        ):
-            render_load_preview(df, meta, show_table=preview_table_in_expander)
-
-    if from_upload or bad_parse:
-        c_clear, c_up = st.columns([1, 2])
-        with c_clear:
-            st.button(
-                "Quitar archivo / Volver al inicio",
-                on_click=_on_clear_upload,
-                key="btn_clear_upload",
-            )
+    # Marca / topbar SIEMPRE primero (antes de Vista previa / Analizar)
+    if show_analyze_prompt or (not analysis_ready and not run_analyze_now):
+        _render_topbar(show_clear=from_upload or bad_parse)
+        if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
+            with st.expander(
+                "Vista previa de la carga",
+                expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1,
+            ):
+                render_load_preview(df, meta, show_table=preview_table_in_expander)
         if bad_parse:
-            with c_up:
-                st.file_uploader(
-                    "Subir otro archivo",
-                    type=["csv", "xlsx", "xls"],
-                    accept_multiple_files=True,
-                    key="repair_uploaded_files",
-                    help="Elegí otro CSV o Excel con separador correcto.",
-                )
+            st.file_uploader(
+                "Subir otro archivo",
+                type=["csv", "xlsx", "xls"],
+                accept_multiple_files=True,
+                key="repair_uploaded_files",
+                help="Elegí otro CSV o Excel con separador correcto.",
+            )
             # El próximo run prioriza repair_uploaded_files arriba y descarta el inválido.
             st.stop()
+        if len(tables) > 1 and advanced:
+            with st.expander("Relaciones entre tablas"):
+                graph = build_relationship_graph(tables)
+                st.write(graph.get("note"))
+                st.dataframe(
+                    pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(),
+                    width="stretch",
+                )
 
-    if len(tables) > 1 and advanced:
-        with st.expander("Relaciones entre tablas"):
-            graph = build_relationship_graph(tables)
-            st.write(graph.get("note"))
-            st.dataframe(pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(), width="stretch")
+        def _on_main_analyze() -> None:
+            st.session_state["_run_analyze"] = True
 
-    def _on_main_analyze() -> None:
-        st.session_state["_run_analyze"] = True
-
-    if show_analyze_prompt:
         st.info("Datos listos. Pulsá **Analizar** para generar el resumen.")
         st.button(
             "Analizar",
@@ -880,7 +897,14 @@ def main():
     narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
 
     copy_ctx = _build_copy_context(df, profile, selected)
-    _render_topbar(show_actions=True, df=df, selected=selected, ctx=copy_ctx)
+    # Topbar primero también en el resumen listo (sin botón duplicado de volver)
+    _render_topbar(
+        show_clear=True,
+        show_pdf=True,
+        df=df,
+        selected=selected,
+        ctx=copy_ctx,
+    )
 
     if profile.n_rows < 30 and not bad_parse:
         from estacion.ux.presentation import format_n_rows

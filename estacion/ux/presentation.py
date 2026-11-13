@@ -1694,23 +1694,26 @@ def build_business_kpis(
         {
             "label": row_label,
             "value": format_int_es(profile.n_rows),
-            "delta": f"{format_int_es(profile.n_cols)} cols.",
+            "delta": f"{format_int_es(profile.n_cols)} columnas",
         },
         {
             "label": "Ticket medio" if target and looks_like_money_column(target) else "Promedio",
             "value": mean_txt,
-            "delta": median_txt.replace("mediana ", "med. ") if median_txt else median_txt,
+            "delta": median_txt,
         },
         {
             "label": "Hallazgos",
             "value": format_int_es(n_strong),
-            "delta": f"de {format_int_es(len(ordered))}",
+            "delta": f"de {format_int_es(len(ordered))} revisados",
         },
         {
             "label": "Problemas",
             "value": format_int_es(len(problems)),
-            "delta": (touch.replace("tocan ", "").replace(" filas", "") if touch else "")
-            or "sin alertas",
+            "delta": (
+                touch.replace("tocan ", "en ")
+                if touch.startswith("tocan ")
+                else (touch or "sin alertas graves")
+            ),
         },
     ]
 
