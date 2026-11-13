@@ -1,47 +1,59 @@
 # Funcionalidades pendientes / limitaciones conocidas
 
+## Completado en v0.6.1 (UX — informe completo)
+
+Implementado según `docs/estacion_ux/informe_ux.md` (mejoras 1–17):
+
+1. Portada con beneficio + 3 pasos + ejemplo de ventas
+2. Resumen en lenguaje simple + métrica “Hallazgos confiables”
+3. Tarjetas Qué vimos / Por qué importa / Qué podés hacer + detalle técnico
+4. Severidades en español (Problemas vs Descubrimientos); asimetría ya no es crítica
+5. CSV `;`/decimal `,` + preview + stop si parse sospechoso
+6. Modo Básico (3 tabs) vs Avanzado
+7. Menos JSON: tablas/conclusiones + “datos crudos” en expander
+8. Tooltips, defaults válidos en Causal/Explorar, errores humanos
+9. Segmentación coherente (Silhouette 0.25 + aviso + descripción de grupos)
+10. Analizar con botón claro (+ auto una vez desde el ejemplo)
+11. Sidebar: datos primero; avanzado en expander; demos amigables
+12. Etiquetas en español; tema Streamlit; toolbar mínima
+13. Informe PDF/MD/JSON descargable; resumen simple al inicio del informe
+14. Explorar sin IDs; títulos en preguntas
+15. Tema teal en `config.toml`; íconos por categoría; más aire en tarjetas
+16. Contraste de texto; fuentes de sistema; sidebar colapsada al inicio
+17. `requirements` sin DoWhy/EconML; `run.sh`/`run.bat`; README onboarding; CHANGELOG
+
 ## Completado en v0.6
 
-1. **AIPW agregado para adopción escalonada** — ATT/ATE doubly-robust pre→post con IC bootstrap (`aipw_staggered.py` + UI).
-2. **Conformal multi-horizon (EnbPI-lite)** — radios por horizonte con orígenes rodantes (`conformal.py` cableado en `forecast.py`).
-3. **DAG download/upload** — JSON descargable y file uploader además del copy-paste del canvas.
-4. **Diccionarios de dominio + CI** — healthcare/finance/manufacturing/retail/commercial + tests que validan todos los `*_v1.yaml`.
-5. **Ollama local opcional** — cliente sin API paga; degradación a plantillas.
-6. **Wrapper DoWhy opcional** — soft-dependency (`dowhy_bridge.py`); el núcleo no lo requiere.
-
-## Completado en v0.5
-
-1. **ATT staggered ponderado + DR-lite** — pesos por tamaño de celda, event-time ponderado y ΔY vs controles (`staggered_did.py`).
-2. **PELT de varianza** — `pelt_variance` + detección `mean|variance|both` en series temporales y hallazgos del motor.
-3. **Pronóstico AIC grid + conformal** — selección por AIC entre ETS/ARIMA/SARIMA e intervalos conformal 1-step.
-4. **DAG interactivo** — canvas vis-network (arrastrar nodos + export/import JSON) en UI causal.
-5. **Plugins retail + manufacturing** — checks semánticos adicionales.
-6. **Diccionarios de datos versionados** — YAML/JSON + validación (`config/dictionaries/`, `plugins/dictionaries.py`).
+1. AIPW agregado para adopción escalonada
+2. Conformal multi-horizon (EnbPI-lite)
+3. DAG download/upload
+4. Diccionarios de dominio + CI
+5. Ollama local opcional
+6. Wrapper DoWhy opcional
 
 ## Completado antes
 
-- **v0.4**: DiD escalonado base, forecast ETS/ARIMA, editor DAG roles, plugins healthcare/finance.
-- **v0.3**: STL, PELT media, Gower/k-prototypes, e-value OR, DiD+pretrends, reglas UI, sesiones, multi-tabla.
-- **v0.2**: Missingness, FDR, benchmark, PDF, Rosenbaum/PSM, drift, sesiones.
+- **v0.5**: ATT ponderado + DR-lite, PELT varianza, forecast AIC/conformal, DAG interactivo, plugins retail/mfg, diccionarios
+- **v0.4**: DiD escalonado base, forecast ETS/ARIMA, editor DAG, plugins healthcare/finance
+- **v0.3**: STL, PELT media, Gower/k-prototypes, e-value, DiD+pretrends, reglas UI, sesiones, multi-tabla
+- **v0.2**: Missingness, FDR, benchmark, PDF, Rosenbaum/PSM, drift, sesiones
 
 ## Aún limitado (consciente)
 
-- AIPW es un contraste **agregado** pre→post; no desagrega el estimador Callaway–Sant'Anna completo celda a celda.
-- Conformal multi-horizon calibra residuales con el mismo fitter (no ensemble EnbPI completo).
-- Canvas DAG interactivo sigue sin postMessage bidireccional nativo (download/upload mitiga el copy-paste).
-- Plugins/diccionarios son heurísticos y dependen de nombres/rangos declarados.
-- **DoWhy/EconML**: opcionales; el núcleo no depende de ellos.
-- **IA con proveedor LLM**: Ollama local o hook; sin API paga por defecto (diseño).
+- AIPW es contraste agregado pre→post (no CS celda a celda completo).
+- Conformal multi-horizon no es ensemble EnbPI completo.
+- Canvas DAG sin postMessage bidireccional nativo (hay download/upload).
+- Plugins/diccionarios son heurísticos.
 
-## Candidatos futuros restantes (opcional)
+## Candidatos futuros (opcional)
 
-1. Estimador CS completo multi-(g,t) con librería especializada (opcional).
-2. EnbPI con ensemble / actualización online de residuales.
-3. Componente Streamlit publicado con postMessage bidireccional para DAG.
-4. Más reglas de dominio y diccionarios verticales.
+1. Estimador CS completo multi-(g,t) con librería especializada
+2. EnbPI con ensemble / residuales online
+3. Componente Streamlit publicado con sync DAG bidireccional
+4. Más diccionarios verticales
 
 ## No se harán (por diseño)
 
-- Afirmar causalidad automática.
-- Sustituir bibliotecas estadísticas por estimaciones de un LLM.
-- Depender de APIs pagas para el núcleo.
+- Afirmar causalidad automática
+- Sustituir bibliotecas estadísticas por estimaciones de un LLM
+- Depender de APIs pagas para el núcleo

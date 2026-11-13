@@ -2,13 +2,15 @@
 
 ## Flujo recomendado
 
-1. **Cargar datos** (CSV/Excel) o elegir un sintético.
-2. Revisar **Descubrimiento**: lista priorizada de hallazgos.
-3. Abrir cada hallazgo y leer evidencia, alternativas y limitaciones.
-4. Usar **Explorar** para contrastar visualmente (filtros, scatter, series).
-5. Confirmar con **Estadística** (pruebas dirigidas / regresión).
-6. Si hay hipótesis causales, usar **Causal exploratorio** sin tratar el resultado como prueba causal.
-7. Exportar **Informe**.
+**Modo básico** (por defecto): Resumen → Explorar tus datos → Informe.
+
+1. **Cargar datos** (CSV/Excel, también con `;` y decimal `,`) o el botón **"Probar con un ejemplo de ventas"**.
+2. Revisá el **Resumen en lenguaje simple** y las tarjetas (Qué vimos / Por qué importa).
+3. Abrí **Detalle técnico** solo si querés p-valores y método.
+4. Usá **Explorar** para contrastar con gráficos.
+5. Exportá el **Informe** (PDF).
+
+**Modo avanzado** (toggle en la barra): Estadística, Segmentación, Causal, Datos faltantes, Comparar, reglas y plugins.
 
 ## Interpretar un hallazgo
 

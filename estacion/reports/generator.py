@@ -37,12 +37,29 @@ def generate_markdown_report(
         f"({profile.memory_mb} MB). "
         f"Se priorizaron **{len(findings)}** hallazgos automáticos."
     )
-    top = findings[:5]
-    if top:
-        lines.append("")
-        lines.append("Hallazgos principales:")
-        for i, f in enumerate(top, 1):
-            lines.append(f"{i}. **{f.title}** — {f.magnitude} ({f.severity.value})")
+    try:
+        from estacion.ux.presentation import build_plain_summary, humanize_finding, sort_findings_for_humans
+
+        bullets = build_plain_summary(findings, profile, artifacts)
+        if bullets:
+            lines.append("")
+            lines.append("### En lenguaje simple")
+            for b in bullets:
+                lines.append(f"- {b}")
+        top = sort_findings_for_humans(findings)[:5]
+        if top:
+            lines.append("")
+            lines.append("Hallazgos principales:")
+            for i, f in enumerate(top, 1):
+                h = humanize_finding(f)
+                lines.append(f"{i}. **{h['title_simple']}** — {f.magnitude} ({h['label']})")
+    except Exception:
+        top = findings[:5]
+        if top:
+            lines.append("")
+            lines.append("Hallazgos principales:")
+            for i, f in enumerate(top, 1):
+                lines.append(f"{i}. **{f.title}** — {f.magnitude} ({f.severity.value})")
     lines.append("")
     lines.append("## Características de los datos")
     lines.append("")

@@ -87,6 +87,17 @@ def group_comparison(
             stat, p = stats.mannwhitneyu(a, b, alternative="two-sided")
             method = "mannwhitney_u"
         d = _cohens_d(a, b)
+        means = result["group_means"]
+        vals = list(means.values())
+        rel_gap = 0.0
+        if vals and abs(np.mean(vals)) > 1e-9:
+            rel_gap = (max(vals) - min(vals)) / (abs(np.mean(vals)) + 1e-9)
+        priority = 40.0
+        if pd.notna(d):
+            priority += min(35.0, abs(float(d)) * 25.0)
+        priority += min(25.0, rel_gap * 40.0)
+        if p < alpha:
+            priority += 10.0
         result.update(
             {
                 "method": method,
@@ -94,7 +105,11 @@ def group_comparison(
                 "p_value": float(p),
                 "significant": bool(p < alpha),
                 "effect_size_cohens_d": d,
-                "practically_important": bool(pd.notna(d) and abs(d) >= 0.5),
+                "practically_important": bool(
+                    (pd.notna(d) and abs(d) >= 0.5) or rel_gap >= 0.15
+                ),
+                "relative_mean_gap": float(rel_gap),
+                "priority_score": float(min(95.0, priority)),
                 "groups_compared": labels,
             }
         )
@@ -110,6 +125,17 @@ def group_comparison(
         ss_between = sum(len(a) * (a.mean() - grand.mean()) ** 2 for a in arrays)
         ss_total = ((grand - grand.mean()) ** 2).sum()
         eta2 = float(ss_between / ss_total) if ss_total > 0 else np.nan
+        means = result["group_means"]
+        vals = list(means.values())
+        rel_gap = 0.0
+        if vals and abs(np.mean(vals)) > 1e-9:
+            rel_gap = (max(vals) - min(vals)) / (abs(np.mean(vals)) + 1e-9)
+        priority = 40.0
+        if pd.notna(eta2):
+            priority += min(35.0, float(eta2) * 200.0)
+        priority += min(25.0, rel_gap * 40.0)
+        if p < alpha:
+            priority += 10.0
         result.update(
             {
                 "method": method,
@@ -117,7 +143,11 @@ def group_comparison(
                 "p_value": float(p),
                 "significant": bool(p < alpha),
                 "effect_size_eta_sq": eta2,
-                "practically_important": bool(pd.notna(eta2) and eta2 >= 0.06),
+                "practically_important": bool(
+                    (pd.notna(eta2) and eta2 >= 0.06) or rel_gap >= 0.15
+                ),
+                "relative_mean_gap": float(rel_gap),
+                "priority_score": float(min(95.0, priority)),
                 "groups_compared": labels,
             }
         )

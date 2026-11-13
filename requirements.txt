@@ -1,4 +1,4 @@
-# Estación Universal de Análisis de Datos
+# Núcleo (sin DoWhy/EconML — opcionales vía pip install -e ".[causal]")
 pandas>=2.1.0
 numpy>=1.26.0
 scipy>=1.11.0
@@ -18,9 +18,3 @@ joblib>=1.3.0
 networkx>=3.2.0
 PyYAML>=6.0
 pyarrow>=14.0.0
-# Inferencia causal (opcional; el módulo degrada sin ella)
-dowhy>=0.11; python_version>="3.9"
-econml>=0.15.0; python_version>="3.9"
-# IA opcional (desacoplada; no requerida para el núcleo)
-# openai>=1.0.0
-# anthropic>=0.18.0

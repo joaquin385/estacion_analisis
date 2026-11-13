@@ -144,7 +144,7 @@ def run_segmentation(
         }
 
     sil = best_kmeans.get("silhouette") if best_kmeans else np.nan
-    natural_groups_likely = bool(pd.notna(sil) and sil >= 0.35)
+    natural_groups_likely = bool(pd.notna(sil) and sil >= 0.25)
 
     # PCA 2D para viz
     coords = None
@@ -166,7 +166,7 @@ def run_segmentation(
             "gower_labels": gow.get("labels"),
             "kprototypes_labels": kp.get("labels"),
         }
-        if gow.get("ok") and pd.notna(gow.get("silhouette")) and gow["silhouette"] >= 0.35:
+        if gow.get("ok") and pd.notna(gow.get("silhouette")) and gow["silhouette"] >= 0.25:
             natural_groups_likely = True
 
     return {
@@ -190,10 +190,10 @@ def run_segmentation(
         "stability": stability,
         "natural_groups_likely": natural_groups_likely,
         "caveat": (
-            "Silhouette ≥ 0.35 sugiere estructura posible; valores bajos indican "
-            "que puede no haber grupos naturales claros."
+            "No encontramos grupos naturales claros (Silhouette < 0.25). "
+            "Los colores del gráfico son una partición forzada; no los uses como segmentos de negocio."
             if not natural_groups_likely
-            else "Hay indicios de estructura de grupos; validar interpretabilidad de negocio."
+            else "Hay indicios de estructura de grupos (Silhouette ≥ 0.25); validá interpretabilidad de negocio."
         ),
         "pca_coords": coords,
         "limitations": [

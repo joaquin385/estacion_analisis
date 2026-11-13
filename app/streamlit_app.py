@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from estacion.core.loader import load_table, load_multiple, suggest_join_keys
+from estacion.core.loader import load_table, suggest_join_keys
 from estacion.core.profiler import profile_dataframe
 from estacion.core.drift import compare_datasets
 from estacion.core.session import SessionStore
@@ -27,7 +27,6 @@ from estacion.core.quality_rules import (
     QualityRuleSet,
     load_rules,
     evaluate_quality_rules,
-    save_rules_example,
 )
 from estacion.core.multitable import build_relationship_graph, suggest_analysis_paths
 from estacion.discovery.engine import run_discovery
@@ -72,56 +71,87 @@ from estacion.viz.charts import (
 from estacion.reports.generator import generate_markdown_report, export_findings_json
 from estacion.reports.pdf_export import generate_pdf_report
 from estacion.ai.interpreter import interpret_findings
+from estacion.ux.presentation import (
+    default_explore_columns,
+    default_causal_columns,
+    format_p_value,
+)
+try:
+    from app.panels import (
+        render_welcome,
+        render_load_preview,
+        render_finding_cards,
+        render_plain_summary,
+        render_segmentation_human,
+    )
+except ImportError:  # streamlit a veces pone app/ en sys.path
+    from panels import (  # type: ignore
+        render_welcome,
+        render_load_preview,
+        render_finding_cards,
+        render_plain_summary,
+        render_segmentation_human,
+    )
 import json
 
 st.set_page_config(
     page_title="Estación Universal de Análisis",
     page_icon="◈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 CUSTOM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap');
-html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
-h1, h2, h3 { font-family: 'IBM Plex Serif', serif !important; color: #0F4C5C; }
+html, body, [class*="css"] {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+h1, h2, h3 { color: #0F4C5C !important; }
 .stApp {
   background:
     radial-gradient(1200px 500px at 10% -10%, #d8eee8 0%, transparent 55%),
     radial-gradient(900px 400px at 100% 0%, #f7e6d4 0%, transparent 50%),
     #f7f4ef;
 }
-div[data-testid="stSidebar"] {
-  background: linear-gradient(180deg, #0F4C5C 0%, #163a43 100%);
-}
-div[data-testid="stSidebar"] * { color: #f3f0ea !important; }
 .finding-card {
-  background: rgba(255,255,255,0.72);
-  border-left: 4px solid #E36414;
-  padding: 0.9rem 1rem;
-  margin-bottom: 0.75rem;
-  border-radius: 0 10px 10px 0;
+  background: rgba(255,255,255,0.88);
+  border-left: 5px solid #E36414;
+  padding: 1.05rem 1.15rem;
+  margin-bottom: 1rem;
+  border-radius: 0 12px 12px 0;
 }
 .brand {
-  font-family: 'IBM Plex Serif', serif;
-  font-size: 1.8rem;
+  font-size: 1.85rem;
   letter-spacing: 0.02em;
   color: #0F4C5C;
+  font-weight: 650;
 }
-.muted { color: #5c6670; font-size: 0.95rem; }
+.muted { color: #2a3439; font-size: 1rem; }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
+DEMO_LABELS = {
+    "—": "—",
+    "commercial": "Ventas (ejemplo)",
+    "financial": "Finanzas (ejemplo)",
+    "operational": "Operaciones (ejemplo)",
+    "segments": "Segmentos (ejemplo)",
+    "causal_confounded": "Causal confounded (prueba)",
+    "nonlinear_null": "Relación nula no lineal (prueba)",
+}
+DOMAIN_LABELS = {k: ("General" if k == "default" else k.capitalize()) for k in DOMAIN_PRESETS}
 
-def _load_uploaded(files) -> dict[str, pd.DataFrame]:
+
+def _load_uploaded(files) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
     tables = {}
+    metas = {}
     for f in files:
         data = f.read()
         df, meta = load_table(data, name=Path(f.name).stem)
         tables[meta["name"]] = df
-    return tables
+        metas[meta["name"]] = meta
+    return tables, metas
 
 
 @st.cache_data(show_spinner=False)
@@ -129,46 +159,212 @@ def _cached_discovery(df: pd.DataFrame, name: str, quality_domain: str = "defaul
     return run_discovery(df, name=name, quality_domain=quality_domain)
 
 
+def _analysis_ready(selected, quality_domain) -> bool:
+    return (
+        "findings" in st.session_state
+        and st.session_state.get("active_table") == selected
+        and st.session_state.get("quality_domain") == quality_domain
+    )
+
+
+def _run_discovery(df, selected, quality_domain, use_ollama):
+    with st.spinner("1/3 Revisando calidad… 2/3 Buscando relaciones… 3/3 Detectando anomalías…"):
+        # invalidar cache si cambió dominio: clave ya incluye quality_domain
+        findings, profile, artifacts = _cached_discovery(df, selected, quality_domain)
+    st.session_state["findings"] = findings
+    st.session_state["profile"] = profile
+    st.session_state["artifacts"] = artifacts
+    st.session_state["active_table"] = selected
+    st.session_state["quality_domain"] = quality_domain
+    st.session_state["narratives"] = interpret_findings(findings, try_ollama=use_ollama)
+    return findings, profile, artifacts
+
+
+def _render_explore(df, profile):
+    st.subheader("Explorar tus datos")
+    defaults = default_explore_columns(profile)
+    cols = list(df.columns)
+    plot_cols = [c for c in cols if c not in set(profile.identifier_columns)] or cols
+    left, right = st.columns(2)
+    with left:
+        hist_default = defaults["hist"] if defaults["hist"] in plot_cols else plot_cols[0]
+        hist_idx = plot_cols.index(hist_default) if hist_default in plot_cols else 0
+        col = st.selectbox("¿Cómo se reparten los valores?", plot_cols, index=hist_idx, key="hist_col")
+        color_opts = ["—"] + [c for c in profile.categorical_columns if c in plot_cols]
+        color = st.selectbox("Color (opcional)", color_opts, key="hist_color")
+        st.plotly_chart(histogram(df, col, None if color == "—" else color), width="stretch")
+    with right:
+        nums = [c for c in (profile.numeric_columns or plot_cols) if c not in set(profile.identifier_columns)]
+        nums = nums or plot_cols
+        x_def = defaults["scatter_x"] if defaults["scatter_x"] in nums else nums[0]
+        y_cands = [c for c in nums if c != x_def] or nums
+        y_def = defaults["scatter_y"] if defaults["scatter_y"] in y_cands else y_cands[0]
+        x = st.selectbox("¿Se mueven juntas? Eje X", nums, index=nums.index(x_def), key="sx")
+        y = st.selectbox(
+            "Eje Y",
+            [c for c in nums if c != x] or nums,
+            index=max(0, ([c for c in nums if c != x] or nums).index(y_def)
+                      if y_def in ([c for c in nums if c != x] or nums) else 0),
+            key="sy",
+        )
+        st.plotly_chart(scatter(df, x, y, trendline=True), width="stretch")
+
+    if len(profile.numeric_columns) >= 2:
+        corr = correlation_analysis(df, profile.numeric_columns[:20])
+        st.plotly_chart(
+            correlation_heatmap(corr["spearman_matrix"], "Mapa de relaciones (más oscuro = más relacionadas)"),
+            width="stretch",
+        )
+
+    if profile.datetime_columns and profile.numeric_columns:
+        dcol = st.selectbox("Fecha", profile.datetime_columns)
+        vcol = st.selectbox("Valor temporal", profile.numeric_columns, key="ts_val")
+        st.plotly_chart(time_series_plot(df, dcol, vcol), width="stretch")
+        with st.expander("Detalle temporal y pronóstico", expanded=False):
+            tres = temporal_analysis(df, dcol, vcol)
+            st.write(
+                tres.get("interpretation")
+                or tres.get("summary")
+                or "Análisis temporal calculado."
+            )
+            with st.expander("Ver datos crudos del temporal"):
+                st.write({k: tres[k] for k in tres if k not in {"limitations", "series_tail"}})
+            horizon = st.slider(
+                "Horizonte",
+                4,
+                36,
+                12,
+                help="Cuántos períodos a futuro querés proyectar.",
+            )
+            fmethod = st.selectbox(
+                "Método de pronóstico",
+                ["aic_grid", "auto", "ets", "arima"],
+                format_func=lambda m: {
+                    "aic_grid": "Elegir el mejor (AIC)",
+                    "auto": "Automático",
+                    "ets": "Suavizado exponencial (ETS)",
+                    "arima": "ARIMA",
+                }.get(m, m),
+                help="AIC compara modelos; conformal calibra intervalos con errores recientes.",
+            )
+            use_conf = st.checkbox(
+                "Intervalos conformal",
+                value=True,
+                help="Bandas de incertidumbre calibradas con errores de predicción pasados.",
+            )
+            if st.button("Pronosticar"):
+                st.session_state["forecast"] = forecast_series(
+                    df, dcol, vcol, horizon=horizon, method=fmethod, conformal=use_conf
+                )
+            fc = st.session_state.get("forecast")
+            if fc:
+                if fc.get("ok"):
+                    st.write(f"Método: `{fc['method']}`")
+                    st.dataframe(pd.DataFrame(fc["forecast"]), width="stretch")
+                    st.caption("; ".join(fc.get("limitations") or []))
+                else:
+                    st.warning(fc.get("reason"))
+
+
+def _render_informe(df, selected, store):
+    st.subheader("Informe")
+    profile = st.session_state.get("profile")
+    findings = st.session_state.get("findings")
+    artifacts = st.session_state.get("artifacts", {})
+    if not profile or findings is None:
+        st.info("Ejecutá el análisis primero.")
+        return
+    out_dir = ROOT / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if st.button("Descargar informe (PDF)", type="primary"):
+        pdf_path = out_dir / f"{selected}_informe.pdf"
+        with st.spinner("Generando PDF…"):
+            generate_pdf_report(df, profile, findings, pdf_path, artifacts)
+        with open(pdf_path, "rb") as fh:
+            st.download_button("Descargar PDF", fh, file_name=pdf_path.name, key="pdf_dl")
+
+    with st.expander("Otros formatos"):
+        md = generate_markdown_report(profile, findings, artifacts)
+        st.download_button("Descargar Markdown", md, file_name=f"{selected}_informe.md")
+        js = json.dumps([f.to_dict() for f in findings], ensure_ascii=False, indent=2, default=str)
+        st.download_button("Descargar hallazgos (JSON)", js, file_name=f"{selected}_hallazgos.json")
+        if st.button("También guardar en carpeta outputs/"):
+            generate_markdown_report(profile, findings, artifacts, out_dir / f"{selected}_informe.md")
+            export_findings_json(findings, out_dir / f"{selected}_hallazgos.json")
+            st.success("Guardado en outputs/")
+
+    sess_name = st.text_input("Nombre de sesión", value=selected)
+    if st.button("Guardar sesión"):
+        meta = store.save(df, profile, findings, artifacts, name=sess_name, notes="UI save")
+        st.success(f"Sesión guardada: {meta.id}")
+
+    st.markdown("#### Vista previa del informe")
+    bullets = __import__("estacion.ux.presentation", fromlist=["build_plain_summary"]).build_plain_summary(
+        findings, profile, artifacts
+    )
+    for b in bullets:
+        st.markdown(f"- {b}")
+    st.markdown(generate_markdown_report(profile, findings, artifacts)[:3500])
+
+
 def main():
     st.markdown('<div class="brand">Estación Universal de Análisis de Datos</div>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="muted">Exploración, estadística y descubrimiento automático — '
-        "los números salen de código, no de un LLM.</p>",
+        '<p class="muted">Subí tu planilla y descubrí problemas, patrones y oportunidades. '
+        "Los números salen de código estadístico; la IA (opcional) solo redacta.</p>",
         unsafe_allow_html=True,
     )
 
+    store = SessionStore(ROOT / "outputs" / "sessions")
+
     with st.sidebar:
-        st.header("Datos")
+        st.header("Tus datos")
         uploaded = st.file_uploader(
-            "CSV o Excel", type=["csv", "xlsx", "xls"], accept_multiple_files=True
+            "Subí CSV o Excel",
+            type=["csv", "xlsx", "xls"],
+            accept_multiple_files=True,
+            help="También acepta CSV de Excel en español (separador ; y decimal ,).",
         )
+        demo_keys = list(DEMO_LABELS.keys())
+        forced = st.session_state.pop("want_commercial", None)
+        if forced:
+            st.session_state["_auto_analyze_once"] = True
+        demo_index = demo_keys.index(forced) if forced in demo_keys else 0
         demo = st.selectbox(
-            "O usar dataset sintético",
-            [
-                "—",
-                "commercial",
-                "financial",
-                "operational",
-                "causal_confounded",
-                "nonlinear_null",
-                "segments",
-            ],
+            "O probá un ejemplo",
+            demo_keys,
+            index=demo_index,
+            format_func=lambda k: DEMO_LABELS[k],
         )
-        quality_domain = st.selectbox("Dominio de reglas de calidad", list(DOMAIN_PRESETS.keys()))
-        use_ollama = st.checkbox(
-            "Narrativas vía Ollama local",
-            value=False,
-            help="Opcional. Requiere Ollama en localhost. Sin API paga; si falla, usa plantillas.",
+
+        advanced = st.toggle("Modo avanzado", value=False, help="Activa estadística, causal, plugins, etc.")
+        run_btn = st.button(
+            "Analizar",
+            type="primary",
+            width="stretch",
+            help="Elegir un archivo no analiza solo: hay que pulsar Analizar.",
         )
-        run_btn = st.button("Analizar", type="primary", use_container_width=True)
-        st.divider()
-        st.caption("Sesiones guardadas")
-        store = SessionStore(ROOT / "outputs" / "sessions")
-        sessions = store.list_sessions()
-        session_labels = ["—"] + [f"{s['name']} ({s['id']})" for s in sessions]
-        pick_session = st.selectbox("Cargar sesión", session_labels)
+
+        with st.expander("Opciones avanzadas"):
+            quality_domain = st.selectbox(
+                "Dominio de reglas de calidad",
+                list(DOMAIN_PRESETS.keys()),
+                format_func=lambda k: DOMAIN_LABELS.get(k, k),
+            )
+            use_ollama = st.checkbox(
+                "Narrativas vía Ollama local",
+                value=False,
+                help="Opcional. Requiere Ollama en localhost. Sin API paga.",
+            )
+            st.caption("Sesiones guardadas")
+            sessions = store.list_sessions()
+            session_labels = ["—"] + [f"{s['name']} ({s['id']})" for s in sessions]
+            pick_session = st.selectbox("Cargar sesión", session_labels)
 
     tables: dict[str, pd.DataFrame] = {}
+    load_metas: dict[str, dict] = {}
+
     if pick_session and pick_session != "—":
         sid = pick_session.rsplit("(", 1)[-1].rstrip(")")
         loaded = store.load(sid)
@@ -205,140 +401,135 @@ def main():
             st.session_state["artifacts"] = loaded.get("artifacts", {})
             st.session_state["active_table"] = loaded["meta"]["dataset_name"]
             st.session_state["quality_domain"] = quality_domain
-            st.session_state["narratives"] = interpret_findings(
-                findings_loaded, try_ollama=use_ollama
-            )
+            st.session_state["narratives"] = interpret_findings(findings_loaded, try_ollama=use_ollama)
             st.sidebar.success(f"Sesión {sid} cargada")
     elif uploaded:
-        tables = _load_uploaded(uploaded)
+        tables, load_metas = _load_uploaded(uploaded)
+        st.session_state["load_metas"] = load_metas
     elif demo and demo != "—":
         path = ROOT / "data" / "synthetic" / f"{demo}.csv"
         if path.exists():
             df, meta = load_table(path)
             tables[meta["name"]] = df
+            load_metas[meta["name"]] = meta
         else:
-            st.warning("Dataset sintético no generado. Ejecutá: python -m data.synthetic.generate_datasets")
+            st.warning("Dataset de ejemplo no generado. Ejecutá: python -m data.synthetic.generate_datasets")
 
     if not tables:
-        st.info("Cargá un archivo o elegí un dataset sintético para comenzar.")
-        st.markdown(
-            """
-            **Qué hace esta estación**
-            - Perfila tipos, calidad y granularidad
-            - Descubre correlaciones, segmentos, anomalías y patrones temporales
-            - Corre pruebas estadísticas con tamaños de efecto e IC
-            - Explora asociaciones causales **sin afirmar causalidad**
-            - Compara datasets (drift), exporta PDF y guarda sesiones
-            """
-        )
+        render_welcome()
         return
 
     names = list(tables.keys())
-    selected = st.sidebar.selectbox("Tabla activa", names)
+    selected = st.sidebar.selectbox("Tabla activa", names) if len(names) > 1 else names[0]
     df = tables[selected]
+    meta = (st.session_state.get("load_metas") or load_metas or {}).get(selected) or {}
 
-    if len(tables) > 1:
-        with st.expander("Grafo de relaciones entre tablas", expanded=True):
+    if uploaded or meta.get("warnings") or meta.get("suspicious_parse"):
+        with st.expander("Vista previa de la carga", expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1):
+            render_load_preview(df, meta)
+
+    if meta.get("suspicious_parse") and meta.get("n_cols") == 1:
+        st.stop()
+
+    if len(tables) > 1 and advanced:
+        with st.expander("Relaciones entre tablas"):
             graph = build_relationship_graph(tables)
             st.write(graph.get("note"))
-            st.write("**Nodos**", pd.DataFrame([{k: n[k] for k in ("id", "n_rows", "n_cols") if k in n} for n in graph["nodes"]]))
-            st.write("**Aristas (joins candidatos)**", pd.DataFrame(graph["edges"]) if graph["edges"] else "—")
-            st.write("**Rutas sugeridas**")
-            for p in suggest_analysis_paths(graph):
-                st.markdown(f"- {p}")
+            st.dataframe(pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(), width="stretch")
 
+    if run_btn or st.session_state.pop("_auto_analyze_once", False):
+        _run_discovery(df, selected, quality_domain, use_ollama)
+
+    if not _analysis_ready(selected, quality_domain):
+        st.info("Datos listos. Pulsá **Analizar** en la barra lateral para generar el resumen.")
+        st.dataframe(df.head(12), width="stretch")
+        return
+
+    findings = st.session_state["findings"]
+    profile = st.session_state["profile"]
+    artifacts = st.session_state["artifacts"]
+    narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
+
+    if not advanced:
+        tabs = st.tabs(["Resumen", "Explorar tus datos", "Informe"])
+        with tabs[0]:
+            st.subheader("Resumen")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Filas", f"{profile.n_rows:,}")
+            c2.metric("Columnas", profile.n_cols)
+            c3.metric("Hallazgos", len(findings))
+            render_plain_summary(findings, profile, artifacts)
+            st.markdown("---")
+            render_finding_cards(findings, narratives)
+        with tabs[1]:
+            _render_explore(df, profile)
+            with st.expander("Calidad rápida"):
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Columna": v.name,
+                                "Tipo": v.role.value,
+                                "% vacíos": round(v.missing_pct * 100, 1),
+                                "Únicos": v.n_unique,
+                            }
+                            for v in profile.variables
+                        ]
+                    ),
+                    width="stretch",
+                )
+        with tabs[2]:
+            _render_informe(df, selected, store)
+        return
+
+    # --- Modo avanzado ---
     tabs = st.tabs(
         [
-            "Descubrimiento",
+            "Resumen / Descubrimiento",
             "Perfil / Reglas",
-            "Missingness",
+            "Datos faltantes",
             "Explorar",
             "Estadística",
             "Segmentación",
-            "Causal exploratorio",
-            "Comparar / Drift",
+            "¿Qué causa qué?",
+            "Comparar archivos",
             "Informe / Sesiones",
         ]
     )
 
-    # --- Descubrimiento ---
     with tabs[0]:
-        st.subheader("Motor de descubrimiento automático")
-        need_run = (
-            run_btn
-            or "findings" not in st.session_state
-            or st.session_state.get("active_table") != selected
-            or st.session_state.get("quality_domain") != quality_domain
-        )
-        if need_run and not (pick_session and pick_session != "—" and not run_btn):
-            with st.spinner("Investigando el dataset…"):
-                findings, profile, artifacts = _cached_discovery(df, selected, quality_domain)
-            st.session_state["findings"] = findings
-            st.session_state["profile"] = profile
-            st.session_state["artifacts"] = artifacts
-            st.session_state["active_table"] = selected
-            st.session_state["quality_domain"] = quality_domain
-            st.session_state["narratives"] = interpret_findings(
-                findings, try_ollama=use_ollama
-            )
-        else:
-            findings = st.session_state["findings"]
-            profile = st.session_state["profile"]
-            artifacts = st.session_state["artifacts"]
-
+        st.subheader("Descubrimiento")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Filas", f"{profile.n_rows:,}")
         c2.metric("Columnas", profile.n_cols)
         c3.metric("Hallazgos", len(findings))
         fdr = artifacts.get("fdr_global") or {}
-        c4.metric("FDR global sig.", f"{fdr.get('n_significant', '—')}/{fdr.get('n_tested', '—')}")
-
-        sev_filter = st.multiselect(
-            "Severidad",
-            ["critical", "notable", "interesting", "info"],
-            default=["critical", "notable", "interesting"],
+        c4.metric(
+            "Hallazgos confiables",
+            f"{fdr.get('n_significant', '—')}/{fdr.get('n_tested', '—')}",
+            help="Tras corregir por muchas pruebas (FDR).",
         )
-        only_fdr = st.checkbox("Solo hallazgos que sobreviven FDR global (si tienen p)", value=False)
-        narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
-        for f in findings:
-            if f.severity.value not in sev_filter:
-                continue
-            if only_fdr and f.p_value is not None and f.significant_fdr_global is False:
-                continue
-            fdr_txt = ""
-            if f.p_value_fdr is not None:
-                fdr_txt = f" · p_FDR={f.p_value_fdr:.4g}"
-            st.markdown(
-                f'<div class="finding-card"><strong>{f.title}</strong><br/>'
-                f'<span class="muted">{f.category.value} · {f.severity.value} · score {f.score:.0f}{fdr_txt}</span>'
-                f"<br/>{f.observation}<br/>"
-                f"<em>Magnitud:</em> {f.magnitude} · <em>Método:</em> {f.method}</div>",
-                unsafe_allow_html=True,
-            )
-            with st.expander("Evidencia, alternativas y seguimiento"):
-                st.write(narratives.get(f.id, ""))
-                st.json(f.evidence)
-                st.write("**Alternativas:**", f.alternative_explanations)
-                st.write("**Seguimiento:**", f.follow_up)
-                st.write("**Limitaciones:**", f.limitations)
+        render_plain_summary(findings, profile, artifacts)
+        render_finding_cards(findings, narratives)
 
-    # --- Perfil / Reglas ---
     with tabs[1]:
-        profile = st.session_state.get("profile") or profile_dataframe(df, selected)
         st.subheader("Perfil del dataset")
-        rows = []
-        for v in profile.variables:
-            rows.append(
-                {
-                    "variable": v.name,
-                    "dtype": v.dtype,
-                    "role": v.role.value,
-                    "missing_%": round(v.missing_pct * 100, 2),
-                    "unique": v.n_unique,
-                    "warnings": "; ".join(v.warnings),
-                }
-            )
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Columna": v.name,
+                        "Tipo": v.dtype,
+                        "Rol": v.role.value,
+                        "% vacíos": round(v.missing_pct * 100, 2),
+                        "Únicos": v.n_unique,
+                        "Avisos": "; ".join(v.warnings),
+                    }
+                    for v in profile.variables
+                ]
+            ),
+            width="stretch",
+        )
         st.write("**Granularidad:**", profile.granularity_notes or "—")
         if profile.numeric_columns:
             st.write("**Descriptivos**")
@@ -347,9 +538,9 @@ def main():
         st.subheader("Editor de reglas de calidad")
         base = load_rules(domain=quality_domain)
         c1, c2, c3 = st.columns(3)
-        max_miss = c1.slider("max_missing_pct", 0.0, 1.0, float(base.max_missing_pct), 0.01)
-        max_dup = c2.slider("max_duplicate_pct", 0.0, 0.5, float(base.max_duplicate_pct), 0.001)
-        max_out = c3.slider("max_iqr_outlier_pct", 0.0, 0.5, float(base.max_iqr_outlier_pct), 0.01)
+        max_miss = c1.slider("Máx. % vacíos", 0.0, 1.0, float(base.max_missing_pct), 0.01)
+        max_dup = c2.slider("Máx. % duplicados", 0.0, 0.5, float(base.max_duplicate_pct), 0.001)
+        max_out = c3.slider("Máx. % outliers IQR", 0.0, 0.5, float(base.max_iqr_outlier_pct), 0.01)
         nonneg = st.multiselect(
             "Columnas no negativas",
             list(df.columns),
@@ -361,8 +552,9 @@ def main():
             default=[c for c in base.id_columns_must_be_unique if c in df.columns],
         )
         sentinels = st.text_input(
-            "Sentinelas (coma-separados)",
+            "Valores trampa (coma-separados)",
             value=",".join(map(str, base.forbidden_sentinel_values)),
+            help="Ej: -999, NA, n/a — códigos que parecen número pero son faltantes.",
         )
         sent_list: list = []
         for tok in sentinels.split(","):
@@ -391,14 +583,7 @@ def main():
         qres = evaluate_quality_rules(df, custom_rules)
         st.write(f"**Violaciones:** {qres['n_violations']} (críticas: {qres['n_critical']})")
         if qres.get("violations"):
-            st.dataframe(pd.DataFrame(qres["violations"]), use_container_width=True)
-        if st.button("Guardar reglas custom (YAML)"):
-            outp = ROOT / "config" / "quality_rules_custom.yaml"
-            outp.write_text(
-                __import__("yaml").dump(custom_rules.to_dict(), allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
-            )
-            st.success(f"Guardado en {outp}")
+            st.dataframe(pd.DataFrame(qres["violations"]), width="stretch")
 
         st.subheader("Plugins de dominio")
         plugs = list_plugins()
@@ -411,150 +596,81 @@ def main():
             st.session_state["plugin_result"] = run_plugin_checks(plug_name, df)
         pr = st.session_state.get("plugin_result")
         if pr and pr.get("ok"):
-            st.write(f"**{pr.get('title')}** — hallazgos: {pr.get('n_findings')} (críticos: {pr.get('n_critical')})")
-            st.dataframe(pd.DataFrame(pr.get("findings") or []), use_container_width=True)
-            st.caption(" · ".join(pr.get("notes") or []))
+            st.write(f"**{pr.get('title')}** — hallazgos: {pr.get('n_findings')}")
+            st.dataframe(pd.DataFrame(pr.get("findings") or []), width="stretch")
 
-        st.markdown("##### Diccionario de datos versionado")
+        st.markdown("##### Diccionario de datos")
         dict_dir = ROOT / "config" / "dictionaries"
         dict_files = sorted(
-            [p.name for p in dict_dir.glob("*.yaml")] + [p.name for p in dict_dir.glob("*.yml")]
+            [p.name for p in dict_dir.glob("*.yaml")]
+            + [p.name for p in dict_dir.glob("*.yml")]
             + [p.name for p in dict_dir.glob("*.json")]
         ) if dict_dir.exists() else []
         dict_choice = st.selectbox("Diccionario", ["—"] + dict_files, key="dict_file")
-        cda, cdb = st.columns(2)
-        with cda:
-            if dict_choice != "—" and st.button("Validar contra diccionario"):
-                dd = load_dictionary(dict_dir / dict_choice)
-                st.session_state["dict_val"] = validate_against_dictionary(df, dd)
-            if st.button("Inferir stub de diccionario"):
-                stub = infer_dictionary_stub(df, name=selected, domain=quality_domain)
-                outp = dict_dir / f"{selected}_draft.json"
-                save_dictionary(stub, outp)
-                st.success(f"Stub guardado en {outp}")
-        with cdb:
-            up_dict = st.file_uploader("Subir diccionario YAML/JSON", type=["yaml", "yml", "json"], key="dict_up")
-            if up_dict is not None and st.button("Validar diccionario subido"):
-                tmp = dict_dir / f"_upload_{up_dict.name}"
-                tmp.parent.mkdir(parents=True, exist_ok=True)
-                tmp.write_bytes(up_dict.getvalue())
-                dd = load_dictionary(tmp)
-                st.session_state["dict_val"] = validate_against_dictionary(df, dd)
+        if dict_choice != "—" and st.button("Validar contra diccionario"):
+            dd = load_dictionary(dict_dir / dict_choice)
+            st.session_state["dict_val"] = validate_against_dictionary(df, dd)
+        if st.button("Inferir stub de diccionario"):
+            stub = infer_dictionary_stub(df, name=selected, domain=quality_domain)
+            outp = dict_dir / f"{selected}_draft.json"
+            save_dictionary(stub, outp)
+            st.success(f"Stub guardado en {outp}")
         dv = st.session_state.get("dict_val")
         if dv:
             st.write(f"Diccionario `{dv.get('dictionary')}` v{dv.get('version')}: {dv.get('n_findings')} hallazgos")
-            st.dataframe(pd.DataFrame(dv.get("findings") or []), use_container_width=True)
+            st.dataframe(pd.DataFrame(dv.get("findings") or []), width="stretch")
 
-    # --- Missingness ---
     with tabs[2]:
-        st.subheader("Análisis de missingness")
+        st.subheader("Datos faltantes")
+        st.caption("¿Los vacíos parecen al azar o dependen de otras columnas?")
         if st.button("Analizar faltantes", key="miss_btn"):
             st.session_state["missingness"] = analyze_missingness(df)
-        miss = st.session_state.get("missingness") or (st.session_state.get("artifacts") or {}).get("missingness")
+        miss = st.session_state.get("missingness") or artifacts.get("missingness")
         if miss:
-            # artifacts store a compact version; full analysis if button pressed
-            if "summary" in miss:
-                st.dataframe(miss["summary"], use_container_width=True)
-                st.write("**Little MCAR**", miss.get("little_mcar"))
-                st.write("**Pantalla MAR**", {k: v for k, v in miss.get("mar_screen", {}).items() if k != "tests"})
-                tests = (miss.get("mar_screen") or {}).get("tests") or []
-                if tests:
-                    st.dataframe(pd.DataFrame(tests).head(30), use_container_width=True)
-                pw = miss.get("pairwise_both_missing")
-                if isinstance(pw, pd.DataFrame) and not pw.empty:
-                    st.plotly_chart(correlation_heatmap(pw, "Ambos faltantes (proporción)"), use_container_width=True)
-            else:
-                st.json(miss)
-                st.info("Pulsá 'Analizar faltantes' para el análisis completo con tablas.")
+            from estacion.ux.result_views import humanize_missingness
+
+            humanize_missingness(miss)
         else:
-            st.info("Ejecutá el descubrimiento o pulsá el botón de análisis.")
+            st.info("Pulsá 'Analizar faltantes' para el detalle.")
 
-    # --- Explorar ---
     with tabs[3]:
-        st.subheader("Exploración interactiva")
-        profile = st.session_state.get("profile") or profile_dataframe(df, selected)
-        cols = list(df.columns)
-        left, right = st.columns(2)
-        with left:
-            col = st.selectbox("Histograma", cols, key="hist_col")
-            color = st.selectbox("Color (opcional)", ["—"] + cols, key="hist_color")
-            st.plotly_chart(
-                histogram(df, col, None if color == "—" else color),
-                use_container_width=True,
-            )
-        with right:
-            x = st.selectbox("Scatter X", profile.numeric_columns or cols, key="sx")
-            y = st.selectbox(
-                "Scatter Y",
-                [c for c in (profile.numeric_columns or cols) if c != x] or cols,
-                key="sy",
-            )
-            st.plotly_chart(scatter(df, x, y, trendline=True), use_container_width=True)
+        _render_explore(df, profile)
 
-        if len(profile.numeric_columns) >= 2:
-            corr = correlation_analysis(df, profile.numeric_columns[:20])
-            st.plotly_chart(
-                correlation_heatmap(corr["spearman_matrix"], "Spearman"),
-                use_container_width=True,
-            )
-
-        if profile.datetime_columns and profile.numeric_columns:
-            dcol = st.selectbox("Fecha", profile.datetime_columns)
-            vcol = st.selectbox("Valor temporal", profile.numeric_columns, key="ts_val")
-            st.plotly_chart(time_series_plot(df, dcol, vcol), use_container_width=True)
-            tres = temporal_analysis(df, dcol, vcol)
-            st.json({k: tres[k] for k in tres if k not in {"limitations", "series_tail"}})
-            st.markdown("##### Pronóstico exploratorio (grid AIC + conformal)")
-            horizon = st.slider("Horizonte", 4, 36, 12)
-            fmethod = st.selectbox("Método", ["aic_grid", "auto", "ets", "arima"])
-            use_conf = st.checkbox("Intervalos conformal", value=True)
-            if st.button("Pronosticar"):
-                st.session_state["forecast"] = forecast_series(
-                    df, dcol, vcol, horizon=horizon, method=fmethod, conformal=use_conf
-                )
-            fc = st.session_state.get("forecast")
-            if fc:
-                if fc.get("ok"):
-                    st.write(f"Método: `{fc['method']}` · backtest: {fc.get('backtest')}")
-                    if fc.get("aic_selection"):
-                        st.write("**Selección AIC (top)**")
-                        st.dataframe(pd.DataFrame(fc["aic_selection"]), use_container_width=True)
-                    if fc.get("conformal_multihorizon"):
-                        st.write("**Conformal multi-horizon**", fc["conformal_multihorizon"])
-                    elif fc.get("conformal"):
-                        st.write("**Conformal 1-step**", fc["conformal"])
-                    st.dataframe(pd.DataFrame(fc["forecast"]), use_container_width=True)
-                    st.caption("; ".join(fc.get("limitations") or []))
-                else:
-                    st.warning(fc.get("reason"))
-
-        with st.expander("Filtros"):
-            filt_col = st.selectbox("Filtrar por", ["—"] + cols)
-            if filt_col != "—":
-                if pd.api.types.is_numeric_dtype(df[filt_col]):
-                    lo, hi = float(df[filt_col].min()), float(df[filt_col].max())
-                    rng = st.slider("Rango", lo, hi, (lo, hi))
-                    view = df[df[filt_col].between(*rng)]
-                else:
-                    vals = st.multiselect("Valores", sorted(df[filt_col].dropna().astype(str).unique())[:100])
-                    view = df[df[filt_col].astype(str).isin(vals)] if vals else df
-                st.write(f"Filas filtradas: {len(view):,}")
-                st.dataframe(view.head(100))
-
-    # --- Estadística ---
     with tabs[4]:
         st.subheader("Estadística dirigida")
-        profile = st.session_state.get("profile") or profile_dataframe(df, selected)
-        mode = st.radio("Análisis", ["Comparación de grupos", "Regresión lineal", "Regresión logística"], horizontal=True)
+        mode = st.radio(
+            "Análisis",
+            ["Comparación de grupos", "Regresión lineal", "Regresión logística"],
+            horizontal=True,
+        )
         if mode == "Comparación de grupos":
-            g = st.selectbox("Grupo", profile.categorical_columns or list(df.columns))
-            v = st.selectbox("Valor", profile.numeric_columns or list(df.columns))
+            g = st.selectbox("Grupo", profile.categorical_columns or list(df.columns), help="Categoría a comparar, ej. región")
+            v = st.selectbox("Valor", profile.numeric_columns or list(df.columns), help="Número a medir, ej. revenue")
             if st.button("Ejecutar comparación"):
                 res = group_comparison(df, v, g)
-                st.json(res)
-                if res.get("ok") and res.get("group_means"):
-                    st.plotly_chart(group_means_bar(res["group_means"]), use_container_width=True)
-                    st.plotly_chart(boxplot(df, v, g), use_container_width=True)
+                st.session_state["group_cmp"] = res
+            res = st.session_state.get("group_cmp")
+            if res:
+                if res.get("ok"):
+                    st.write(
+                        f"**Conclusión:** "
+                        f"{'Hay diferencias significativas' if res.get('significant') else 'No hay diferencias claras'} "
+                        f"entre grupos (p = {format_p_value(res.get('p_value'))})."
+                    )
+                    st.write(f"Efecto d = {res.get('effect_size_cohens_d')}")
+                    if res.get("group_means"):
+                        st.dataframe(
+                            pd.DataFrame(
+                                [{"grupo": k, "media": v} for k, v in res["group_means"].items()]
+                            ),
+                            width="stretch",
+                        )
+                        st.plotly_chart(group_means_bar(res["group_means"]), width="stretch")
+                        st.plotly_chart(boxplot(df, v, g), width="stretch")
+                    with st.expander("Datos crudos"):
+                        st.json(res)
+                else:
+                    st.warning(res.get("reason"))
         elif mode == "Regresión lineal":
             y = st.selectbox("y", profile.numeric_columns or list(df.columns), key="lin_y")
             xs = st.multiselect("x", [c for c in df.columns if c != y], key="lin_x")
@@ -570,101 +686,158 @@ def main():
                 st.text(res.get("summary_text") or res)
                 st.write(res.get("limitations"))
 
-    # --- Segmentación ---
     with tabs[5]:
         st.subheader("Segmentación")
-        profile = st.session_state.get("profile") or profile_dataframe(df, selected)
         nums = st.multiselect("Numéricas", profile.numeric_columns, default=profile.numeric_columns[:5])
         cats = st.multiselect("Categóricas (mixtas)", profile.categorical_columns, default=[])
         if st.button("Correr segmentación") and len(nums) >= 2:
-            with st.spinner("Evaluando K-means / jerárquico / DBSCAN…"):
-                seg = run_segmentation(df, nums, cats)
-            st.session_state["seg"] = seg
+            with st.spinner("Evaluando agrupamientos…"):
+                st.session_state["seg"] = run_segmentation(df, nums, cats)
         seg = st.session_state.get("seg")
-        if seg and seg.get("ok"):
-            st.write(seg.get("caveat"))
-            st.write("**K-means grid**", seg["kmeans"]["grid"])
-            st.write("**Estabilidad**", seg.get("stability"))
-            st.write("**DBSCAN best**", seg["dbscan"]["best"])
-            if seg.get("mixed"):
-                st.write("**Mixtos (Gower / k-prototypes)**", seg["mixed"])
-            labels = seg["kmeans"].get("labels")
+        if seg:
+            render_segmentation_human(seg, df=df)
+            labels = seg.get("kmeans", {}).get("labels")
             coords = seg.get("pca_coords")
             if labels is not None and coords is not None:
-                st.plotly_chart(cluster_scatter(coords, labels), use_container_width=True)
-            st.write("**Limitaciones:**", seg.get("limitations"))
+                if not seg.get("natural_groups_likely"):
+                    st.caption("Gráfico atenuado: partición forzada.")
+                st.plotly_chart(cluster_scatter(coords, labels), width="stretch")
 
-    # --- Causal ---
     with tabs[6]:
-        st.subheader("Análisis causal exploratorio")
-        st.warning(
-            "Ningún resultado demuestra causalidad. "
-            "Incluye PSM, DiD, adopción escalonada y editor de DAG."
-        )
+        st.subheader("¿Qué causa qué? (exploratorio)")
+        st.warning("Ningún resultado demuestra causalidad. Son asociaciones bajo supuestos fuertes.")
         causal_mode = st.radio(
             "Modo",
             ["Ajuste / PSM", "DiD multi-período", "Adopción escalonada", "Editor DAG"],
             horizontal=True,
         )
+        defaults_c = default_causal_columns(profile, df)
         cols = list(df.columns)
         if causal_mode == "Ajuste / PSM":
-            treatment = st.selectbox("Treatment", cols, key="c_t")
-            outcome = st.selectbox("Outcome", [c for c in cols if c != treatment], key="c_o")
+            st.caption("¿Para qué sirve? Ej.: ¿el descuento se asocia a más ventas, controlando tamaño de cliente?")
+            t_opts = defaults_c["treatment_options"] or cols
+            o_opts = defaults_c["outcome_options"] or [c for c in cols if c != (t_opts[0] if t_opts else None)]
+            t_idx = t_opts.index(defaults_c["treatment"]) if defaults_c["treatment"] in t_opts else 0
+            treatment = st.selectbox(
+                "Tratamiento",
+                t_opts,
+                index=t_idx,
+                help="Lo que querés ver si tiene efecto, ej. canal o un sí/no.",
+                key="c_t",
+            )
+            o_opts2 = [c for c in o_opts if c != treatment] or o_opts
+            o_idx = o_opts2.index(defaults_c["outcome"]) if defaults_c["outcome"] in o_opts2 else 0
+            outcome = st.selectbox(
+                "Resultado (numérico)",
+                o_opts2,
+                index=o_idx,
+                help="Debe ser un número (ej. revenue). No uses categorías como región.",
+                key="c_o",
+            )
             confounders = st.multiselect(
                 "Confusores hipotéticos",
                 [c for c in cols if c not in {treatment, outcome}],
+                default=[c for c in defaults_c["confounders"] if c not in {treatment, outcome}],
+                help="Variables que afectan ambos, ej. tamaño de cliente.",
                 key="c_c",
             )
             if st.button("Explorar causalmente"):
-                res = exploratory_causal_screen(df, treatment, outcome, confounders)
-                st.session_state["causal"] = res
+                if outcome not in profile.numeric_columns and not pd.api.types.is_numeric_dtype(df[outcome]):
+                    st.error(
+                        f"Para esto el resultado tiene que ser un número; '{outcome}' no lo es. "
+                        "Probá con revenue u otra columna numérica."
+                    )
+                else:
+                    st.session_state["causal"] = exploratory_causal_screen(df, treatment, outcome, confounders)
             res = st.session_state.get("causal")
             if res:
-                st.write(res["disclaimer"])
-                st.write("**Asociación ajustada**", res["adjusted_association"])
-                if res.get("sensitivity_adjusted"):
-                    st.write("**E-value / sensibilidad (ajuste)**", res["sensitivity_adjusted"])
+                st.caption(res.get("disclaimer") or "")
+                from estacion.ux.result_views import humanize_causal_adjusted
+
+                humanize_causal_adjusted(res.get("adjusted_association") or {})
                 psm = res.get("propensity_matching")
                 if psm and psm.get("ok"):
-                    st.write("**PSM**", {k: psm[k] for k in psm if k not in {"matched_outcomes", "sensitivity"}})
-                    if psm.get("covariate_balance"):
-                        st.dataframe(pd.DataFrame(psm["covariate_balance"]), use_container_width=True)
-                    if psm.get("sensitivity"):
-                        st.write("**Sensibilidad PSM**", psm["sensitivity"])
+                    st.write("**Matching por propensity (resumen)**")
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {"campo": k, "valor": v}
+                                for k, v in psm.items()
+                                if k not in {"matched_outcomes", "sensitivity"}
+                                and not isinstance(v, (dict, list, pd.DataFrame))
+                            ]
+                        ),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                    with st.expander("Ver datos crudos PSM"):
+                        st.json({k: psm[k] for k in psm if k not in {"matched_outcomes"}})
             if st.button("Estimar ATE con DoWhy (opcional)"):
                 st.session_state["dowhy"] = estimate_ate_dowhy(df, treatment, outcome, confounders)
             dw = st.session_state.get("dowhy")
             if dw:
-                if dw.get("ok"):
-                    st.write("**DoWhy**", dw)
-                else:
-                    st.info(dw.get("reason") or "DoWhy no disponible")
+                st.write(dw if dw.get("ok") else dw.get("reason"))
                 st.caption(f"DoWhy instalado: {dowhy_available()}")
         elif causal_mode == "DiD multi-período":
-            outcome = st.selectbox("Outcome", cols, key="did_o")
-            gcol = st.selectbox("Grupo tratado/control", [c for c in cols if c != outcome], key="did_g")
-            tcol = st.selectbox("Tiempo / período", [c for c in cols if c not in {outcome, gcol}], key="did_t")
+            st.caption("¿Para qué sirve? Comparar tratados vs controles antes/después de una intervención.")
+            outcome = st.selectbox(
+                "Resultado",
+                profile.numeric_columns or cols,
+                key="did_o",
+                help="Variable numérica a medir (ej. ventas).",
+            )
+            gcol = st.selectbox(
+                "Grupo tratado/control",
+                [c for c in cols if c != outcome],
+                key="did_g",
+                help="Columna que indica quién recibió el tratamiento.",
+            )
+            tcol = st.selectbox(
+                "Tiempo / período",
+                [c for c in cols if c not in {outcome, gcol}],
+                key="did_t",
+                help="Columna de tiempo o período.",
+            )
             levels = sorted(df[gcol].dropna().unique().tolist(), key=lambda x: str(x))
-            treated = st.selectbox("Nivel tratado", levels, key="did_tl")
+            treated = st.selectbox("Nivel tratado", levels, key="did_tl", help="Valor que marca al grupo tratado.")
             periods = sorted(df[tcol].dropna().unique().tolist(), key=lambda x: str(x))
-            post = st.multiselect("Períodos post", periods, default=periods[-1:] if periods else [])
+            post = st.multiselect(
+                "Períodos post",
+                periods,
+                default=periods[-1:] if periods else [],
+                help="Períodos después de la intervención.",
+            )
             if post and st.button("Correr DiD"):
                 st.session_state["did"] = difference_in_differences_multipperiod(
                     df, outcome, gcol, tcol, treated, post
                 )
             did = st.session_state.get("did")
             if did:
-                st.write(did)
-                pre = did.get("pretrends") or {}
-                if pre.get("ok"):
-                    st.info(pre.get("interpretation"))
+                if did.get("ok") is False:
+                    st.warning(did.get("reason") or "No se pudo estimar DiD.")
+                else:
+                    st.success("Estimación DiD lista (exploratoria; no prueba causalidad).")
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {"campo": k, "valor": v}
+                                for k, v in did.items()
+                                if not isinstance(v, (dict, list, pd.DataFrame))
+                            ]
+                        ),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                    with st.expander("Ver datos crudos DiD"):
+                        st.write(did)
         elif causal_mode == "Adopción escalonada":
-            st.caption(
-                "ATT(g,t) simplificado estilo Callaway–Sant'Anna + AIPW agregado. "
-                "Requiere panel unit×time y columna de primer período tratado (NaN = never-treated)."
+            outcome = st.selectbox(
+                "Resultado",
+                profile.numeric_columns or cols,
+                key="cs_o",
+                help="Variable numérica del panel.",
             )
-            outcome = st.selectbox("Outcome", cols, key="cs_o")
-            unit = st.selectbox("Unidad", [c for c in cols if c != outcome], key="cs_u")
+            unit = st.selectbox("Unidad", [c for c in cols if c != outcome], key="cs_u", help="Ej. tienda, cliente, planta.")
             time_c = st.selectbox("Tiempo", [c for c in cols if c not in {outcome, unit}], key="cs_t")
             mode_tt = st.radio(
                 "Origen del tiempo de tratamiento",
@@ -684,7 +857,6 @@ def main():
                     [c for c in cols if c not in {outcome, unit, time_c}],
                     key="cs_tb",
                 )
-                work = work.copy()
                 work["_treat_time"] = prepare_treat_time_from_binary(work, unit, time_c, tbin)
                 tt = "_treat_time"
             aipw_covars = st.multiselect(
@@ -699,13 +871,7 @@ def main():
             with b2:
                 if st.button("Estimar AIPW agregado"):
                     st.session_state["aipw"] = aipw_staggered_att(
-                        work,
-                        outcome,
-                        unit,
-                        time_c,
-                        tt,
-                        covariate_cols=aipw_covars or None,
-                        n_boot=200,
+                        work, outcome, unit, time_c, tt, covariate_cols=aipw_covars or None, n_boot=200
                     )
             stag = st.session_state.get("stag")
             if stag:
@@ -715,34 +881,16 @@ def main():
                 m2.metric("ATT ponderado", stag.get("overall_att_weighted"))
                 dr = stag.get("doubly_robust_lite") or {}
                 m3.metric("ATT DR-lite", dr.get("att") if dr.get("ok") else None)
-                st.write("Control:", stag.get("control_mode"), "· celdas:", stag.get("n_att_cells"))
-                if stag.get("pretrend_check"):
-                    st.write("**Placebos / pre-trends**", stag["pretrend_check"])
-                if stag.get("att_by_event_time_weighted"):
-                    st.write("**Event-time ponderado**")
-                    st.dataframe(pd.DataFrame(stag["att_by_event_time_weighted"]), use_container_width=True)
                 if stag.get("ok"):
-                    st.dataframe(pd.DataFrame(stag["att_by_cohort_time"]), use_container_width=True)
-                else:
-                    st.warning(stag.get("reason"))
-                if dr:
-                    st.write("**DR-lite**", dr)
-                st.caption(" · ".join(stag.get("limitations") or []))
+                    st.dataframe(pd.DataFrame(stag["att_by_cohort_time"]), width="stretch")
             aipw = st.session_state.get("aipw")
             if aipw:
-                st.markdown("##### AIPW agregado (pre→post)")
                 if aipw.get("ok"):
-                    a1, a2, a3 = st.columns(3)
-                    a1.metric("ATT AIPW", aipw.get("att_aipw"))
-                    a2.metric("ATE AIPW", aipw.get("ate_aipw"))
-                    ci = aipw.get("ci95_att_bootstrap") or [None, None]
-                    a3.metric("IC95 ATT", f"{ci[0]:.3f} … {ci[1]:.3f}" if ci[0] is not None and np.isfinite(ci[0]) else "—")
-                    st.write(aipw)
-                    st.caption(" · ".join(aipw.get("limitations") or []))
+                    st.write("**AIPW**", aipw)
                 else:
                     st.warning(aipw.get("reason"))
         else:
-            st.caption("Editor DAG: roles + aristas + canvas interactivo (vis-network).")
+            st.caption("Editor DAG: roles + aristas + canvas.")
             nodes = st.multiselect("Nodos", cols, default=cols[: min(6, len(cols))], key="dag_nodes")
             roles = {}
             if nodes:
@@ -757,61 +905,34 @@ def main():
                         )
             if st.button("Sugerir aristas por roles"):
                 st.session_state["dag_edges"] = suggest_edges_from_roles(roles)
-            edge_src = st.selectbox("Arista desde", ["—"] + nodes, key="e_src")
-            edge_dst = st.selectbox("Arista hacia", ["—"] + [n for n in nodes if n != edge_src], key="e_dst")
             if "dag_edges" not in st.session_state:
                 st.session_state["dag_edges"] = []
+            edge_src = st.selectbox("Arista desde", ["—"] + nodes, key="e_src")
+            edge_dst = st.selectbox("Arista hacia", ["—"] + [n for n in nodes if n != edge_src], key="e_dst")
             if st.button("Agregar arista") and edge_src != "—" and edge_dst != "—":
                 e = [edge_src, edge_dst]
                 if e not in st.session_state["dag_edges"]:
                     st.session_state["dag_edges"].append(e)
             if st.button("Limpiar aristas"):
                 st.session_state["dag_edges"] = []
-            st.write("Aristas:", st.session_state["dag_edges"])
             dag = build_dag(nodes, st.session_state["dag_edges"], roles)
-            val = validate_dag(dag)
-            st.write("**Validación**", val)
-            dag_payload = {
-                "nodes": nodes,
-                "edges": st.session_state["dag_edges"],
-                "roles": roles,
-            }
+            st.write("**Validación**", validate_dag(dag))
+            dag_payload = {"nodes": nodes, "edges": st.session_state["dag_edges"], "roles": roles}
             st.download_button(
                 "Descargar DAG JSON",
                 data=json.dumps(dag_payload, ensure_ascii=False, indent=2),
                 file_name="dag.json",
                 mime="application/json",
-                key="dag_dl",
             )
-            dag_file = st.file_uploader("Subir DAG JSON", type=["json"], key="dag_upload")
-            if dag_file is not None and st.button("Importar archivo DAG"):
-                try:
-                    parsed = parse_exported_dag_json(dag_file.getvalue().decode("utf-8"))
-                    st.session_state["dag_edges"] = parsed["dag"]["edges"]
-                    st.write("**Validación importada**", parsed["validation"])
-                    st.success("DAG cargado desde archivo")
-                except Exception as exc:
-                    st.error(f"JSON inválido: {exc}")
             if nodes:
-                st.plotly_chart(dag_to_plotly(dag), use_container_width=True)
-                st.markdown("##### Canvas interactivo (arrastrar nodos)")
+                st.plotly_chart(dag_to_plotly(dag), width="stretch")
                 render_interactive_dag(nodes, st.session_state["dag_edges"], roles)
-                exported = st.text_area("Pegá aquí el JSON exportado del canvas")
-                if exported.strip() and st.button("Importar JSON del canvas"):
-                    try:
-                        parsed = parse_exported_dag_json(exported)
-                        st.session_state["dag_edges"] = parsed["dag"]["edges"]
-                        st.write("**Validación importada**", parsed["validation"])
-                        st.success("Aristas actualizadas desde el canvas")
-                    except Exception as exc:
-                        st.error(f"JSON inválido: {exc}")
 
-    # --- Drift ---
     with tabs[7]:
-        st.subheader("Comparación entre datasets (drift)")
+        st.subheader("Comparar dos archivos")
         if len(tables) < 2:
-            st.info("Cargá al menos dos archivos para comparar, o usá un split manual abajo.")
-            frac = st.slider("Split aleatorio de la tabla activa (para demo)", 0.1, 0.9, 0.5)
+            st.info("Cargá al menos dos archivos, o usá un split de demo.")
+            frac = st.slider("Split aleatorio", 0.1, 0.9, 0.5)
             if st.button("Comparar split aleatorio"):
                 a = df.sample(frac=frac, random_state=42)
                 b = df.drop(a.index)
@@ -823,61 +944,16 @@ def main():
                 st.session_state["drift"] = compare_datasets(tables[a_name], tables[b_name], a_name, b_name)
         drift = st.session_state.get("drift")
         if drift:
-            st.write(drift["interpretation"])
-            st.write(f"Driftados: {drift['n_drifted']}")
-            st.dataframe(pd.DataFrame(drift["column_tests"]), use_container_width=True)
-            if drift.get("only_in_a") or drift.get("only_in_b"):
-                st.write("Solo en A:", drift["only_in_a"])
-                st.write("Solo en B:", drift["only_in_b"])
+            st.write(drift.get("interpretation"))
+            st.write(f"Columnas con cambio detectado: {drift.get('n_drifted', 0)}")
+            st.dataframe(pd.DataFrame(drift["column_tests"]), width="stretch")
 
-    # --- Informe / Sesiones ---
     with tabs[8]:
-        st.subheader("Informes y persistencia")
-        profile = st.session_state.get("profile")
-        findings = st.session_state.get("findings")
-        artifacts = st.session_state.get("artifacts", {})
-        if not profile or findings is None:
-            st.info("Ejecutá el descubrimiento primero.")
-        else:
-            out_dir = ROOT / "outputs"
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                if st.button("Markdown + JSON"):
-                    md = generate_markdown_report(
-                        profile, findings, artifacts, out_dir / f"{selected}_informe.md"
-                    )
-                    export_findings_json(findings, out_dir / f"{selected}_hallazgos.json")
-                    st.session_state["last_md"] = md
-                    st.success(f"Exportado a {out_dir}")
-            with c2:
-                if st.button("Exportar PDF"):
-                    pdf_path = out_dir / f"{selected}_informe.pdf"
-                    with st.spinner("Generando PDF…"):
-                        generate_pdf_report(df, profile, findings, pdf_path, artifacts)
-                    st.session_state["last_pdf"] = str(pdf_path)
-                    st.success(f"PDF: {pdf_path}")
-                    with open(pdf_path, "rb") as fh:
-                        st.download_button("Descargar PDF", fh, file_name=pdf_path.name)
-            with c3:
-                sess_name = st.text_input("Nombre de sesión", value=selected)
-                if st.button("Guardar sesión"):
-                    meta = store.save(
-                        df, profile, findings, artifacts, name=sess_name, notes="UI save"
-                    )
-                    st.success(f"Sesión guardada: {meta.id}")
-
-            if st.session_state.get("last_md"):
-                st.download_button(
-                    "Descargar Markdown",
-                    st.session_state["last_md"],
-                    file_name=f"{selected}_informe.md",
-                )
-            st.markdown(generate_markdown_report(profile, findings, artifacts)[:4000])
-
-        st.subheader("Comparar dos sesiones guardadas")
+        _render_informe(df, selected, store)
+        st.subheader("Comparar dos sesiones")
         sessions = store.list_sessions()
         if len(sessions) < 2:
-            st.caption("Guardá al menos dos sesiones para comparar hallazgos.")
+            st.caption("Guardá al menos dos sesiones para comparar.")
         else:
             labels = {f"{s['name']} ({s['id']})": s["id"] for s in sessions}
             a = st.selectbox("Sesión A", list(labels), key="cmp_a")
@@ -885,28 +961,9 @@ def main():
             if st.button("Comparar sesiones"):
                 la = store.load(labels[a])
                 lb = store.load(labels[b])
-                fa = {f["id"]: f for f in la["findings"]}
-                fb = {f["id"]: f for f in lb["findings"]}
                 titles_a = {f["title"] for f in la["findings"]}
                 titles_b = {f["title"] for f in lb["findings"]}
-                only_a = sorted(titles_a - titles_b)
-                only_b = sorted(titles_b - titles_a)
-                common = sorted(titles_a & titles_b)
-                st.write(f"Comunes: {len(common)} | Solo A: {len(only_a)} | Solo B: {len(only_b)}")
-                st.write("**Solo en A**", only_a[:30])
-                st.write("**Solo en B**", only_b[:30])
-                # drift de datos si ambos tienen df
-                if la.get("df") is not None and lb.get("df") is not None:
-                    common_cols = [c for c in la["df"].columns if c in lb["df"].columns]
-                    if common_cols:
-                        drift = compare_datasets(
-                            la["df"][common_cols],
-                            lb["df"][common_cols],
-                            labels[a],
-                            labels[b],
-                        )
-                        st.write("**Drift entre datasets de sesión**", drift["interpretation"])
-                        st.dataframe(pd.DataFrame(drift["column_tests"]).head(40), use_container_width=True)
+                st.write(f"Comunes: {len(titles_a & titles_b)} | Solo A: {len(titles_a - titles_b)} | Solo B: {len(titles_b - titles_a)}")
 
 
 if __name__ == "__main__":

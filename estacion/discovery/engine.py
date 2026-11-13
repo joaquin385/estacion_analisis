@@ -290,39 +290,44 @@ class DiscoveryEngine:
                 continue
             skew = v.stats.get("skewness")
             if skew is not None and abs(skew) >= 2:
-                score = min(88, 45 + abs(skew) * 8)
+                # Asimetría en montos/ventas es frecuente: informar, no alarmar como "crítico".
+                score = min(55, 28 + abs(skew) * 3)
                 self._add(
                     Finding(
                         id=_fid("skew", v.name),
                         title=f"Distribución muy asimétrica: '{v.name}'",
                         observation=(
-                            f"'{v.name}' presenta asimetría {skew:.2f}. "
-                            f"Media={v.stats.get('mean'):.4g}, mediana={v.stats.get('p50'):.4g}."
+                            f"'{v.name}' está sesgada (asimetría {skew:.2f}): "
+                            f"la media ({v.stats.get('mean'):.4g}) se aleja de la mediana "
+                            f"({v.stats.get('p50'):.4g}). En ventas o montos suele ser normal."
                         ),
                         evidence={
-                            "skewness": skew,
+                            "skewness": round(float(skew), 2),
                             "mean": v.stats.get("mean"),
                             "median": v.stats.get("p50"),
                             "p99": v.stats.get("p99"),
                             "max": v.stats.get("max"),
                         },
                         magnitude=f"|skew|={abs(skew):.2f}",
-                        method="pandas.Series.skew / percentiles",
+                        method="Asimetría (skew) y percentiles",
                         alternative_explanations=[
-                            "Proceso generador naturally heavy-tailed (p.ej. montos).",
+                            "Cola larga legítima (p.ej. montos de venta).",
                             "Outliers / errores de carga (ceros extra, unidades mezcladas).",
                             "Mezcla de subpoblaciones.",
                         ],
                         follow_up=[
-                            "Inspeccionar cola superior e inferior.",
-                            "Considerar transformaciones (log) solo para modelado, no para ocultar.",
+                            "Mirar la cola superior en Explorar (histograma).",
+                            "Si vas a modelar, considerar log — no para 'ocultar' el patrón.",
                             "Segmentar y ver si la asimetría desaparece dentro de grupos.",
                         ],
                         category=FindingCategory.DISTRIBUTION,
                         severity=_severity_from_score(score),
                         score=score,
                         variables=[v.name],
-                        practically_important=True,
+                        practically_important=False,
+                        limitations=[
+                            "Asimetría ≠ error de datos. No tratarla automáticamente como problema crítico."
+                        ],
                     )
                 )
             out_pct = v.stats.get("iqr_outlier_pct")
@@ -468,35 +473,66 @@ class DiscoveryEngine:
             if not res.get("significant") and not res.get("practically_important"):
                 continue
             effect = res.get("effect_size_cohens_d") or res.get("effect_size_eta_sq")
-            score = res.get("priority_score", 40)
+            score = float(res.get("priority_score", 40))
+            means = res.get("group_means") or {}
+            # Frase humana: grupo más alto vs más bajo
+            human_means = ""
+            if means:
+                ordered = sorted(means.items(), key=lambda kv: kv[1], reverse=True)
+                top_g, top_v = ordered[0]
+                low_g, low_v = ordered[-1]
+                human_means = (
+                    f"'{top_g}' promedia ≈ {top_v:.1f} vs '{low_g}' ≈ {low_v:.1f} "
+                    f"en '{res['value_col']}'."
+                )
+            method_es = {
+                "kruskal_wallis": "comparación no paramétrica entre grupos",
+                "anova_oneway": "ANOVA de un factor",
+                "welch_t": "prueba t de Welch",
+                "mannwhitney_u": "Mann–Whitney",
+            }.get(res["method"], res["method"])
             self._add(
                 Finding(
                     id=_fid("grp", res["value_col"], res["group_col"]),
                     title=(
-                        f"Diferencias entre grupos de '{res['group_col']}' "
-                        f"en '{res['value_col']}'"
+                        f"'{res['group_col']}' cambia el nivel de '{res['value_col']}'"
                     ),
                     observation=(
-                        f"Prueba {res['method']}: p={res['p_value']:.4g}. "
-                        f"Medias por grupo: {res.get('group_means')}. "
-                        f"Tamaño del efecto={effect}."
+                        f"{human_means} "
+                        + (
+                            "La diferencia es estadísticamente significativa "
+                            if res.get("significant")
+                            else "La diferencia es tentativa "
+                        )
+                        + f"({method_es})."
+                    ).strip(),
+                    evidence={
+                        "group_means": {k: round(float(v), 2) for k, v in means.items()},
+                        "effect_size": round(float(effect), 4) if effect is not None and pd.notna(effect) else None,
+                        "relative_mean_gap": res.get("relative_mean_gap"),
+                        "p_value": res.get("p_value"),
+                        "method": res["method"],
+                        "group_sizes": res.get("group_sizes"),
+                    },
+                    magnitude=(
+                        f"brecha relativa ≈ {100 * float(res.get('relative_mean_gap') or 0):.0f}%"
+                        if res.get("relative_mean_gap") is not None
+                        else f"efecto={effect}"
                     ),
-                    evidence=res,
-                    magnitude=f"effect={effect}",
-                    method=res["method"],
+                    method=method_es,
                     alternative_explanations=[
-                        "Confusión por otras variables.",
-                        "Selección / sesgo de muestreo.",
-                        "Heterogeneidad de varianzas / n desbalanceado.",
+                        "Otra variable puede explicar la diferencia (confusión).",
+                        "Sesgo de muestreo o selección.",
+                        "Grupos con tamaños o varianzas muy distintos.",
                     ],
                     follow_up=[
-                        "Comparaciones pairwise con FDR.",
-                        "Regresión ajustada por covariables.",
-                        "Verificar significancia práctica además de p-valor.",
+                        "Mirar el gráfico de medias en Explorar / Estadística.",
+                        "Ajustar por covariables si hay confusores.",
+                        "Chequear si la diferencia importa en unidades de negocio.",
                     ],
                     category=FindingCategory.STATISTICAL,
                     severity=_severity_from_score(score),
-                    score=min(92, score),
+                    score=min(95, score),
                     variables=[res["value_col"], res["group_col"]],
                     statistically_significant=bool(res.get("significant")),
                     practically_important=bool(res.get("practically_important")),

@@ -37,3 +37,6 @@ outputs/
 # Streamlit / local caches
 .streamlit/secrets.toml
 *.log
+
+# Informe UX local (no versionar)
+docs/estacion_ux/

@@ -49,10 +49,22 @@ def generate_pdf_report(
             f"Duplicados: {profile.duplicate_rows} ({profile.duplicate_pct:.1%})",
             f"Hallazgos priorizados: {len(findings)}",
             "",
-            "Hallazgos principales:",
+            "Resumen en lenguaje simple:",
         ]
-        for i, f in enumerate(findings[:8], 1):
-            lines.append(f"{i}. [{f.severity.value}] {f.title} — {f.magnitude}")
+        try:
+            from estacion.ux.presentation import build_plain_summary, humanize_finding, sort_findings_for_humans
+
+            for b in build_plain_summary(findings, profile, artifacts):
+                lines.append(f"• {b}")
+            lines.append("")
+            lines.append("Hallazgos principales:")
+            for i, f in enumerate(sort_findings_for_humans(findings)[:8], 1):
+                h = humanize_finding(f)
+                lines.append(f"{i}. [{h['label']}] {h['title_simple']} — {f.magnitude}")
+        except Exception:
+            lines.append("Hallazgos principales:")
+            for i, f in enumerate(findings[:8], 1):
+                lines.append(f"{i}. [{f.severity.value}] {f.title} — {f.magnitude}")
         lines += [
             "",
             "Nota: los cálculos son estadísticos; correlación ≠ causalidad.",
