@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.2 — UX v2 (2026-11-13)
+
+- Fix crítico: el ejemplo de ventas persiste entre reruns (ya no vuelve a la portada)
+- Uploader visible en la portada (además de la barra lateral)
+- Resumen y tarjetas 100% en lenguaje simple; descubrimientos primero; problemas deduplicados
+- Sin "None"/"nan"/decimales largos en Estadística, Causal, detalle e informe
+- PDF en un solo clic; "Guardar este análisis para verlo después"
+- Avisos de pocas filas / archivo inválido sin cartel verde contradictorio
+- Modo avanzado: pestañas cortas, encabezados en español, `Elegí opciones`, gráfico de segmentos atenuado
+
 ## v0.6.1 — UX (2026-11-12)
 
 - Resumen en lenguaje simple y tarjetas de negocio (detalle técnico colapsado)
