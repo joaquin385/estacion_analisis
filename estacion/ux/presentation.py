@@ -99,8 +99,85 @@ def format_p_value(p: float | None) -> str:
     return f"{p:.3f}".replace(".", ",")
 
 
-def format_magnitude(mag: Any) -> str:
+def format_p_clause(p: float | None) -> str:
+    """'p = 0,012' o 'p < 0,001' (sin 'p = < …')."""
+    txt = format_p_value(p)
+    if txt == "—":
+        return "p = —"
+    if txt.startswith("<"):
+        return f"p {txt}"
+    return f"p = {txt}"
+
+
+def format_n_rows(n: int) -> str:
+    return "1 fila" if int(n) == 1 else f"{int(n):,} filas".replace(",", " ")
+
+
+def display_value(x: Any, *, pct_if_unit: bool = False) -> Any:
+    """None/nan → '—'; redondea floats."""
+    if x is None:
+        return "—"
+    if isinstance(x, bool):
+        return "Sí" if x else "No"
+    if isinstance(x, float):
+        if math.isnan(x) or math.isinf(x):
+            return "—"
+        if pct_if_unit and abs(x) <= 1.0:
+            return format_pct(x, digits=1)
+        return format_number(x, digits=4 if abs(x) < 1 else 2)
+    if isinstance(x, str) and x.lower() in {"none", "nan", "null"}:
+        return "—"
+    return x
+
+
+def dataframe_for_display(
+    df: pd.DataFrame,
+    *,
+    percent_cols: set[str] | None = None,
+) -> pd.DataFrame:
+    """Copia amigable: None/nan → —, % unitarios, sin bool crudos feos."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    percent_cols = {c.lower() for c in (percent_cols or set())}
+    out = df.copy()
+    for col in out.columns:
+        is_pct = str(col).lower() in percent_cols or "pct" in str(col).lower() or "%" in str(col)
+        out[col] = out[col].map(lambda v, p=is_pct: display_value(v, pct_if_unit=p))
+    return out
+
+
+def group_vs_rest_gap(f: Finding) -> dict[str, Any] | None:
+    """
+    Definición única de brecha entre grupos: extremo vs promedio del resto.
+    (No usar relative_mean_gap del motor: ese compara max−min / media global.)
+    """
+    ev = f.evidence or {}
+    means = ev.get("group_means")
+    if not isinstance(means, dict) or len(means) < 2:
+        return None
+    items = [(str(k), float(v)) for k, v in means.items()]
+    items.sort(key=lambda kv: kv[1], reverse=True)
+    top_name, top_val = items[0]
+    rest = [v for _, v in items[1:]]
+    rest_avg = sum(rest) / len(rest)
+    pct = None if rest_avg == 0 else 100.0 * (top_val - rest_avg) / abs(rest_avg)
+    var = f.variables[0] if f.variables else "valor"
+    return {
+        "top_name": top_name,
+        "top_val": top_val,
+        "rest_avg": rest_avg,
+        "pct": pct,
+        "var": var,
+    }
+
+
+def format_magnitude(mag: Any, finding: Finding | None = None) -> str:
     """Magnitud legible para detalle técnico / informes."""
+    if finding is not None and finding.category == FindingCategory.STATISTICAL:
+        gap = group_vs_rest_gap(finding)
+        if gap and gap.get("pct") is not None:
+            return f"~{abs(gap['pct']):.0f} % vs el resto"
+
     if mag is None:
         return "—"
     if isinstance(mag, (int, float)):
@@ -115,14 +192,130 @@ def format_magnitude(mag: Any) -> str:
     s = str(mag).strip()
     if not s or s.lower() in {"none", "nan"}:
         return "—"
-    # si es un float crudo en string
+
+    # Patrones típicos del motor
+    m = re.match(r"^\|?[ρrR]\|?\s*=\s*([0-9.eE+-]+)$", s) or re.match(
+        r"^\|ρ\|?\s*=\s*([0-9.eE+-]+)$", s
+    )
+    if m:
+        return f"relación ≈ {format_number(float(m.group(1)))}"
+    m = re.match(r"^\|?skew\|?\s*=\s*([0-9.eE+-]+)$", s, re.I)
+    if m:
+        return f"asimetría ≈ {format_number(float(m.group(1)))}"
+    m = re.match(r"^silhouette\s*=\s*([0-9.eE+-]+)$", s, re.I)
+    if m:
+        return f"calidad de grupos ≈ {format_number(float(m.group(1)))}"
+    m = re.match(r"^brecha relativa\s*≈\s*([0-9.eE+-]+)\s*%?$", s, re.I)
+    if m and finding is not None:
+        gap = group_vs_rest_gap(finding)
+        if gap and gap.get("pct") is not None:
+            return f"~{abs(gap['pct']):.0f} % vs el resto"
+    m = re.match(r"^([0-9.eE+-]+)\s*%?\s*(duplicadas|faltantes|anomalías|extremos.*)?$", s, re.I)
+    if m and re.search(r"%", s):
+        # ya viene tipo "2.0% duplicadas"
+        return s.replace("%", " %")
+
+    # float crudo
     try:
         v = float(s)
-        if abs(v) <= 1.0 and "ρ" not in s and "|" not in s:
+        if abs(v) <= 1.0 and "ρ" not in s and "|" not in s and "brecha" not in s.lower():
             return format_pct(v, digits=1)
         return format_number(v, digits=2)
     except Exception:
+        # limpiar brecha del motor si no pudimos recalcular
+        if "brecha relativa" in s.lower() and finding is not None:
+            gap = group_vs_rest_gap(finding)
+            if gap and gap.get("pct") is not None:
+                return f"~{abs(gap['pct']):.0f} % vs el resto"
         return s
+
+
+def evidence_pairs_plain(ev: dict[str, Any] | None, max_items: int = 6) -> list[tuple[str, str]]:
+    """Pares clave/valor redondeados para el informe (sin dump crudo)."""
+    if not ev:
+        return []
+    labels = {
+        "spearman_r": "correlación",
+        "pearson_r": "correlación lineal",
+        "distance_corr": "dependencia",
+        "missing_pct": "% vacíos",
+        "duplicate_pct": "% duplicados",
+        "duplicate_rows": "filas repetidas",
+        "n_missing": "nº vacíos",
+        "n_anomalies": "filas raras",
+        "pct": "%",
+        "effect_size": "efecto",
+        "effect_size_cohens_d": "d de Cohen",
+        "relative_mean_gap": "brecha (max−min / media)",
+        "n": "n",
+        "column": "columna",
+        "var_a": "variable A",
+        "var_b": "variable B",
+        "rule": "regla",
+        "value": "valor",
+        "threshold": "umbral",
+        "skewness": "asimetría",
+        "mean": "promedio",
+        "median": "mediana",
+    }
+    skip = {
+        "group_means",
+        "group_sizes",
+        "anomaly_indices",
+        "limitations",
+        "ok",
+        "sampled",
+        "score_min",
+        "score_median",
+        "nonlinear_hint",
+        "significant_fdr",
+        "practically_important",
+        "best",
+        "caveat",
+        "method",
+        "detail",
+        "severity",
+        "role",
+        "pearson_p",
+        "spearman_p",
+        "spearman_p_fdr",
+        "p_value",
+    }
+    out: list[tuple[str, str]] = []
+    if isinstance(ev.get("group_means"), dict):
+        items = list(ev["group_means"].items())[:4]
+        out.append(
+            (
+                "medias por grupo",
+                " · ".join(f"{k}: {format_number(v)}" for k, v in items),
+            )
+        )
+    for k, v in ev.items():
+        if k in skip or isinstance(v, (dict, list)):
+            continue
+        label = labels.get(k, k)
+        if k in {"missing_pct", "duplicate_pct"} or (k == "pct" and isinstance(v, (int, float)) and float(v) <= 1):
+            out.append((label, format_pct(float(v), digits=1)))
+        elif k == "pct" and isinstance(v, (int, float)) and float(v) > 1:
+            out.append((label, f"{format_number(v, 0)} %"))
+        elif isinstance(v, float):
+            out.append((label, format_number(v, digits=4 if abs(v) < 1 else 2)))
+        else:
+            out.append((label, str(display_value(v))))
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def relationship_confirmed(f: Finding) -> bool:
+    ev = f.evidence or {}
+    if ev.get("significant_fdr") is True:
+        return True
+    if f.statistically_significant is True:
+        return True
+    if f.significant_fdr_global is True:
+        return True
+    return False
 
 
 def finding_track(f: Finding) -> str:
@@ -148,6 +341,9 @@ def severity_label_es(f: Finding) -> tuple[str, str]:
         if sev == FindingSeverity.INTERESTING:
             return "Atención", "orange"
         return "Info datos", "gray"
+    # Relaciones sin respaldo FDR → Info (no “se mueven juntos”)
+    if f.category == FindingCategory.RELATIONSHIP and not relationship_confirmed(f):
+        return "Info", "gray"
     # descubrimientos
     if sev == FindingSeverity.CRITICAL or (
         sev == FindingSeverity.NOTABLE and f.practically_important
@@ -216,29 +412,22 @@ def dedupe_findings(findings: list[Finding]) -> list[Finding]:
 
 
 def _group_vs_rest_phrase(f: Finding) -> str | None:
-    ev = f.evidence or {}
-    means = ev.get("group_means")
-    if not isinstance(means, dict) or len(means) < 2:
+    gap = group_vs_rest_gap(f)
+    if not gap:
         return None
-    items = [(str(k), float(v)) for k, v in means.items()]
-    items.sort(key=lambda kv: kv[1], reverse=True)
-    top_name, top_val = items[0]
-    rest = [v for _, v in items[1:]]
-    if not rest:
-        return None
-    rest_avg = sum(rest) / len(rest)
-    if rest_avg == 0:
-        pct = None
-    else:
-        pct = 100.0 * (top_val - rest_avg) / abs(rest_avg)
-    # En hallazgos de grupos, variables = [valor_numérico, columna_grupo]
-    var = f.variables[0] if f.variables else "valor"
 
     def _approx(v: float) -> str:
         if abs(v) >= 20:
             return f"{v:.0f}"
         return format_number(v)
 
+    top_name, top_val, rest_avg, pct, var = (
+        gap["top_name"],
+        gap["top_val"],
+        gap["rest_avg"],
+        gap["pct"],
+        gap["var"],
+    )
     if pct is None:
         return (
             f"'{top_name}' tiene un promedio de '{var}' de ≈{_approx(top_val)} "
@@ -260,6 +449,11 @@ def _plain_bullet_for_finding(f: Finding) -> str | None:
         r = ev.get("spearman_r")
         if r is None:
             r = ev.get("pearson_r")
+        confirmed = relationship_confirmed(f)
+        if not confirmed:
+            if ev.get("nonlinear_hint"):
+                return f"Posible relación no lineal entre '{a}' y '{b}' (no confirmada)"
+            return f"Posible relación entre '{a}' y '{b}' (no confirmada)"
         if ev.get("nonlinear_hint") and abs(float(r or 0)) < 0.15:
             return (
                 f"Entre '{a}' y '{b}' hay una relación que no es una línea simple "
@@ -346,6 +540,8 @@ def _human_what(f: Finding) -> str:
     if f.category == FindingCategory.RELATIONSHIP:
         a = ev.get("var_a") or (f.variables[0] if f.variables else "X")
         b = ev.get("var_b") or (f.variables[1] if len(f.variables) > 1 else "Y")
+        if not relationship_confirmed(f):
+            return f"Hay una posible relación entre '{a}' y '{b}', todavía no confirmada."
         r = ev.get("spearman_r")
         strength = _strength_word(float(r) if r is not None else None)
         if r is not None and float(r) < 0:
@@ -400,6 +596,8 @@ def _human_why(f: Finding) -> str:
     if f.category == FindingCategory.ANOMALY:
         return "Esas filas pueden ser errores de carga o casos especiales que merecen revisión."
     if f.category == FindingCategory.RELATIONSHIP:
+        if not relationship_confirmed(f):
+            return "Todavía no hay respaldo estadístico suficiente; tomalo como pista, no como hecho."
         return "Si dos columnas se mueven juntas, puede ayudar a priorizar acciones o hipótesis de negocio."
     if f.category == FindingCategory.STATISTICAL:
         group = f.variables[1] if len(f.variables) >= 2 else (f.variables[0] if f.variables else "algunos grupos")
@@ -534,6 +732,8 @@ def _simplify_title(f: Finding) -> str:
     if t.startswith("Correlación:"):
         vars_ = f.variables or []
         if len(vars_) >= 2:
+            if not relationship_confirmed(f):
+                return f"Posible relación (no confirmada): '{vars_[0]}' y '{vars_[1]}'"
             return f"'{vars_[0]}' y '{vars_[1]}' se mueven juntos"
         return "Hay una relación entre dos columnas"
     if "cambia el nivel" in t:
@@ -543,8 +743,21 @@ def _simplify_title(f: Finding) -> str:
     if t.startswith("Posible relación no lineal"):
         vars_ = f.variables or []
         if len(vars_) >= 2:
+            if not relationship_confirmed(f):
+                return f"Posible relación (no confirmada): '{vars_[0]}' y '{vars_[1]}'"
             return f"Relación no lineal posible entre '{vars_[0]}' y '{vars_[1]}'"
     return t
+
+
+def plain_finding_line(f: Finding) -> str:
+    """Línea corta para 'Hallazgos principales' del informe."""
+    h = humanize_finding(f)
+    mag = format_magnitude(f.magnitude, finding=f)
+    # Preferir la frase humana del what si es de grupos/relaciones
+    if f.category in {FindingCategory.STATISTICAL, FindingCategory.RELATIONSHIP}:
+        base = _plain_bullet_for_finding(f) or h["title_simple"]
+        return f"{base} ({h['label']})"
+    return f"{h['title_simple']} — {mag} ({h['label']})"
 
 
 def sort_findings_for_humans(findings: list[Finding]) -> list[Finding]:

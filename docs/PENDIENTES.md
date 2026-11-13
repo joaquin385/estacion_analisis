@@ -13,6 +13,7 @@ Según `prompt_para_cursor.md` / informe UX v2:
 7. PDF en un clic + sesión explicada
 8. Casos borde de carga (pocas filas / inválido)
 9. Modo avanzado traducido (pestañas, encabezados, placeholders)
+10. Follow-up post-PR#1: Analizar en main, quitar archivo, parse inválido, informe/causal/tablas pulidos
 
 ## Completado en v0.6.1 (UX — informe completo)
 

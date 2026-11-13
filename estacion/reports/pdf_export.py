@@ -52,15 +52,18 @@ def generate_pdf_report(
             "Resumen en lenguaje simple:",
         ]
         try:
-            from estacion.ux.presentation import build_plain_summary, humanize_finding, sort_findings_for_humans
+            from estacion.ux.presentation import (
+                build_plain_summary,
+                dedupe_findings,
+                plain_finding_line,
+            )
 
             for b in build_plain_summary(findings, profile, artifacts):
                 lines.append(f"• {b}")
             lines.append("")
             lines.append("Hallazgos principales:")
-            for i, f in enumerate(sort_findings_for_humans(findings)[:8], 1):
-                h = humanize_finding(f)
-                lines.append(f"{i}. [{h['label']}] {h['title_simple']} — {f.magnitude}")
+            for i, f in enumerate(dedupe_findings(findings)[:8], 1):
+                lines.append(f"{i}. {plain_finding_line(f)}")
         except Exception:
             lines.append("Hallazgos principales:")
             for i, f in enumerate(findings[:8], 1):
@@ -138,14 +141,31 @@ def generate_pdf_report(
             fig = plt.figure(figsize=(11.69, 8.27))
             ax = fig.add_subplot(111)
             ax.axis("off")
+            try:
+                from estacion.ux.presentation import (
+                    humanize_finding,
+                    format_magnitude,
+                    evidence_pairs_plain,
+                )
+
+                h = humanize_finding(f)
+                title = h["title_simple"]
+                mag = format_magnitude(f.magnitude, finding=f)
+                obs = h["what"]
+                ev_lines = [f"- {k}: {v}" for k, v in evidence_pairs_plain(f.evidence)]
+            except Exception:
+                title = f.title
+                mag = str(f.magnitude)
+                obs = f.observation
+                ev_lines = []
             text = [
-                f.title,
+                title,
                 f"Categoría: {f.category.value} | Severidad: {f.severity.value} | Score: {f.score:.0f}",
-                f"Magnitud: {f.magnitude}",
+                f"Magnitud: {mag}",
                 f"Método: {f.method}",
                 "",
                 "Observación:",
-                f.observation,
+                obs,
                 "",
                 "Explicaciones alternativas:",
                 *[f"- {a}" for a in f.alternative_explanations],
@@ -156,7 +176,8 @@ def generate_pdf_report(
                 "Limitaciones:",
                 *[f"- {a}" for a in (f.limitations or ["—"])],
                 "",
-                f"Evidencia (resumen): {str(f.evidence)[:900]}",
+                "Evidencia (clave):",
+                *(ev_lines or ["- —"]),
             ]
             ax.text(0.02, 0.98, "\n".join(text), va="top", ha="left", family="DejaVu Sans", fontsize=10)
             pdf.savefig(fig, bbox_inches="tight")

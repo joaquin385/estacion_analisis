@@ -9,6 +9,9 @@
 - PDF en un solo clic; "Guardar este análisis para verlo después"
 - Avisos de pocas filas / archivo inválido sin cartel verde contradictorio
 - Modo avanzado: pestañas cortas, encabezados en español, `Elegí opciones`, gráfico de segmentos atenuado
+- Follow-up: Analizar en el área principal; quitar archivo / volver al inicio; parse inválido con un solo aviso y “Subir otro”
+- Informe sin dump crudo de evidencia; brecha de grupos unificada (extremo vs resto); relaciones no FDR como “no confirmada”
+- Causal sin `p = <`; tablas Perfil/Faltantes/Comparar traducidas; `None` → `—`
 
 ## v0.6.1 — UX (2026-11-12)
 

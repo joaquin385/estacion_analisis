@@ -134,3 +134,54 @@ def test_demo_select_persists_with_apptest():
     # (puede seguir existiendo en sidebar? no — solo en welcome). Si volvió, el botón reaparece
     # como único CTA; chequeamos que hay métricas o tabs.
     assert len(at.session_state.get("findings") or []) > 0
+
+
+def test_group_gap_matches_summary_and_report(commercial_pack):
+    from estacion.ux.presentation import (
+        group_vs_rest_gap,
+        format_magnitude,
+        plain_finding_line,
+        build_plain_summary,
+    )
+    from estacion.reports.generator import generate_markdown_report
+
+    _, findings, profile, artifacts = commercial_pack
+    region = next(f for f in findings if "region" in f.title and "revenue" in f.title)
+    gap = group_vs_rest_gap(region)
+    assert gap is not None
+    assert abs(gap["pct"] - 52) < 1.5
+    assert "~52" in format_magnitude(region.magnitude, finding=region)
+    summary = "\n".join(build_plain_summary(findings, profile, artifacts))
+    assert "~52" in summary
+    md = generate_markdown_report(profile, findings, artifacts)
+    assert "brecha relativa ≈ 48%" not in md
+    assert "0.447522308093447" not in md
+    assert "|ρ|" not in md
+    assert plain_finding_line(region)
+
+
+def test_non_significant_relationship_wording(commercial_pack):
+    from estacion.ux.presentation import humanize_finding, relationship_confirmed
+
+    _, findings, _, _ = commercial_pack
+    weak = [
+        f
+        for f in findings
+        if f.category.value == "relationship" and not relationship_confirmed(f)
+    ]
+    assert weak, "commercial debería tener al menos una relación no confirmada"
+    for f in weak:
+        h = humanize_finding(f)
+        assert "no confirmada" in h["title_simple"].lower() or "posible" in h["title_simple"].lower()
+        assert "se mueven juntos" not in h["title_simple"]
+        assert h["label"] == "Info"
+
+
+def test_format_p_clause_and_rows():
+    from estacion.ux.presentation import format_p_clause, format_n_rows
+
+    assert format_p_clause(1e-9) == "p < 0,001"
+    assert "=" not in format_p_clause(1e-9).split("p")[1] or format_p_clause(1e-9) == "p < 0,001"
+    assert format_p_clause(0.12) == "p = 0,120"
+    assert format_n_rows(1) == "1 fila"
+    assert "filas" in format_n_rows(3)

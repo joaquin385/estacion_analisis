@@ -132,9 +132,39 @@ h1, h2, h3 { color: #0F4C5C !important; }
   font-weight: 650;
 }
 .muted { color: #2a3439; font-size: 1rem; }
+@media (max-width: 768px) {
+  div[data-testid="stMetric"] { padding: 0.15rem 0.25rem; }
+  div[data-testid="stMetric"] label { font-size: 0.75rem !important; }
+  div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+  .brand { font-size: 1.35rem; }
+}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+def _clear_loaded_data() -> None:
+    """Quitar archivo / volver al inicio (limpia tablas y uploaders)."""
+    for k in (
+        "loaded_tables",
+        "load_metas",
+        "load_source",
+        "findings",
+        "profile",
+        "artifacts",
+        "narratives",
+        "active_table",
+        "quality_domain",
+        WELCOME_UPLOAD_KEY,
+        "sidebar_uploaded_files",
+        "_pdf_bytes_keys",
+    ):
+        st.session_state.pop(k, None)
+    # Limpiar caches de PDF
+    for k in list(st.session_state.keys()):
+        if str(k).startswith("_pdf_bytes::"):
+            st.session_state.pop(k, None)
+    st.session_state[DEMO_SELECT_KEY] = "—"
 
 DEMO_LABELS = {
     "—": "—",
@@ -324,6 +354,10 @@ def _render_informe(df, selected, store):
 
 
 def main():
+    # Reset de uploads antes de instanciar widgets (on_click del botón "Quitar…").
+    if st.session_state.pop("_reset_uploads", False):
+        _clear_loaded_data()
+
     st.markdown('<div class="brand">Estación Universal de Análisis de Datos</div>', unsafe_allow_html=True)
     st.markdown(
         '<p class="muted">Subí tu planilla y descubrí problemas, patrones y oportunidades. '
@@ -466,13 +500,43 @@ def main():
     df = tables[selected]
     meta = (st.session_state.get("load_metas") or load_metas or {}).get(selected) or {}
     from_upload = st.session_state.get("load_source") == "upload"
+    bad_parse = bool(meta.get("suspicious_parse") and meta.get("n_cols") == 1)
 
-    if from_upload or meta.get("warnings") or meta.get("suspicious_parse"):
-        with st.expander("Vista previa de la carga", expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1):
+    def _on_clear_upload() -> None:
+        st.session_state["_reset_uploads"] = True
+
+    if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
+        with st.expander(
+            "Vista previa de la carga",
+            expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1,
+        ):
             render_load_preview(df, meta)
 
-    if meta.get("suspicious_parse") and meta.get("n_cols") == 1:
-        st.stop()
+    if from_upload or bad_parse:
+        c_clear, c_up = st.columns([1, 2])
+        with c_clear:
+            st.button(
+                "Quitar archivo / Volver al inicio",
+                on_click=_on_clear_upload,
+                key="btn_clear_upload",
+            )
+        if bad_parse:
+            with c_up:
+                st.file_uploader(
+                    "Subir otro archivo",
+                    type=["csv", "xlsx", "xls"],
+                    accept_multiple_files=True,
+                    key="repair_uploaded_files",
+                    help="Elegí otro CSV o Excel con separador correcto.",
+                )
+            repair = st.session_state.get("repair_uploaded_files") or []
+            if repair:
+                tables, load_metas = _load_uploaded(repair)
+                st.session_state["loaded_tables"] = tables
+                st.session_state["load_metas"] = load_metas
+                st.session_state["load_source"] = "upload"
+                st.rerun()
+            st.stop()
 
     if len(tables) > 1 and advanced:
         with st.expander("Relaciones entre tablas"):
@@ -480,12 +544,22 @@ def main():
             st.write(graph.get("note"))
             st.dataframe(pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(), width="stretch")
 
-    if run_btn or st.session_state.pop("_auto_analyze_once", False):
+    auto_once = st.session_state.pop("_auto_analyze_once", False)
+    main_analyze = False
+    if not _analysis_ready(selected, quality_domain) and not (run_btn or auto_once):
+        st.info("Datos listos. Pulsá **Analizar** para generar el resumen.")
+        main_analyze = st.button(
+            "Analizar",
+            type="primary",
+            key="main_analyze_btn",
+            help="Corre el análisis automático sobre la planilla cargada.",
+        )
+        st.dataframe(df.head(12), width="stretch")
+
+    if run_btn or main_analyze or auto_once:
         _run_discovery(df, selected, quality_domain, use_ollama)
 
     if not _analysis_ready(selected, quality_domain):
-        st.info("Datos listos. Pulsá **Analizar** en la barra lateral para generar el resumen.")
-        st.dataframe(df.head(12), width="stretch")
         return
 
     findings = st.session_state["findings"]
@@ -493,9 +567,11 @@ def main():
     artifacts = st.session_state["artifacts"]
     narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
 
-    if profile.n_rows < 30:
+    if profile.n_rows < 30 and not bad_parse:
+        from estacion.ux.presentation import format_n_rows
+
         st.warning(
-            f"Tu archivo tiene solo **{profile.n_rows} filas**. "
+            f"Tu archivo tiene solo **{format_n_rows(profile.n_rows)}**. "
             "Con tan pocas filas es difícil encontrar patrones (recomendado: 30 o más)."
         )
 
@@ -507,15 +583,17 @@ def main():
             c1.metric("Filas", f"{profile.n_rows:,}")
             c2.metric("Columnas", profile.n_cols)
             c3.metric("Hallazgos", len(findings))
-            if not findings:
+            empty = not findings
+            if empty:
                 st.info(
                     "No encontramos hallazgos automáticos. "
                     "Con pocas filas o datos muy parejos es normal. "
                     "Probá Explorar para mirar los números a ojo."
                 )
-            render_plain_summary(findings, profile, artifacts)
-            st.markdown("---")
-            render_finding_cards(findings, narratives)
+            else:
+                render_plain_summary(findings, profile, artifacts)
+                st.markdown("---")
+                render_finding_cards(findings, narratives, show_empty=False)
         with tabs[1]:
             _render_explore(df, profile)
             with st.expander("Calidad rápida"):
@@ -570,10 +648,17 @@ def main():
                 "No encontramos hallazgos automáticos. "
                 "Con pocas filas o datos muy parejos es normal."
             )
-        render_plain_summary(findings, profile, artifacts)
-        render_finding_cards(findings, narratives)
+        else:
+            render_plain_summary(findings, profile, artifacts)
+            render_finding_cards(findings, narratives, show_empty=False)
 
     with tabs[1]:
+        from estacion.ux.result_views import (
+            ROLE_LABELS_ES,
+            descriptive_table_es,
+            humanize_granularity_notes,
+        )
+
         st.caption("¿Para qué sirve? Ficha de cada columna y reglas de calidad editables.")
         st.subheader("Perfil del dataset")
         st.dataframe(
@@ -582,20 +667,30 @@ def main():
                     {
                         "Columna": v.name,
                         "Tipo": v.dtype,
-                        "Rol": v.role.value,
-                        "% vacíos": round(v.missing_pct * 100, 2),
+                        "Rol": ROLE_LABELS_ES.get(v.role.value, v.role.value),
+                        "% vacíos": round(v.missing_pct * 100, 1),
                         "Únicos": v.n_unique,
-                        "Avisos": "; ".join(v.warnings),
+                        "Avisos": "; ".join(v.warnings) or "—",
                     }
                     for v in profile.variables
                 ]
             ),
             width="stretch",
         )
-        st.write("**Granularidad:**", profile.granularity_notes or "—")
+        notes = humanize_granularity_notes(profile.granularity_notes)
+        if notes:
+            st.markdown("**Granularidad:**")
+            for n in notes:
+                st.markdown(f"- {n}")
+        else:
+            st.write("**Granularidad:** —")
         if profile.numeric_columns:
             st.write("**Descriptivos**")
-            st.dataframe(pd.DataFrame(descriptive_report(df, profile.numeric_columns)).T)
+            st.dataframe(
+                descriptive_table_es(descriptive_report(df, profile.numeric_columns)),
+                width="stretch",
+                hide_index=True,
+            )
 
         st.subheader("Editor de reglas de calidad")
         base = load_rules(domain=quality_domain)
@@ -1064,7 +1159,11 @@ def main():
 
             st.write(drift.get("interpretation"))
             st.write(f"Columnas con cambio detectado: {drift.get('n_drifted', 0)}")
-            st.dataframe(rename_df_columns_es(pd.DataFrame(drift["column_tests"])), width="stretch")
+            st.dataframe(
+                rename_df_columns_es(pd.DataFrame(drift["column_tests"])),
+                width="stretch",
+                hide_index=True,
+            )
 
     with tabs[8]:
         st.caption("¿Para qué sirve? Bajar el informe y guardar el análisis para más tarde.")

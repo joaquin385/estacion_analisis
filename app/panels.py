@@ -16,7 +16,9 @@ from estacion.ux.presentation import (
     format_p_value,
     format_number,
     format_magnitude,
+    format_n_rows,
     finding_track,
+    dataframe_for_display,
 )
 from estacion.viz.charts import group_means_bar
 
@@ -127,7 +129,7 @@ def render_welcome(
         help="También acepta CSV de Excel en español (separador ; y decimal ,).",
         label_visibility="collapsed",
     )
-    st.caption("Formatos: CSV o Excel (.xlsx). El botón del navegador puede decir “Browse files”.")
+    st.caption("Formatos: CSV o Excel (.xlsx).")
 
     def _load_commercial_demo() -> None:
         # on_click corre antes de instanciar widgets en el próximo run,
@@ -156,33 +158,38 @@ def render_welcome(
 
 def render_load_preview(df: pd.DataFrame, meta: dict[str, Any] | None) -> None:
     meta = meta or {}
-    warnings = meta.get("warnings") or []
+    warnings = [str(w) for w in (meta.get("warnings") or []) if w]
     bad = bool(meta.get("suspicious_parse") or (meta.get("n_cols") == 1))
-    if bad:
-        st.error(
-            "La lectura del archivo parece incorrecta (¿1 sola columna?). "
-            "Si exportaste desde Excel en español, el separador suele ser `;` "
-            "y el decimal `,`. Revisá la vista previa."
-        )
-    for w in warnings:
-        st.warning(w)
-
     n_rows = len(df)
-    if n_rows < 30:
-        st.warning(
-            f"Tu archivo tiene solo **{n_rows} filas**. "
-            "Con tan pocas filas es difícil encontrar patrones (recomendado: 30 o más)."
-        )
 
-    if not bad:
+    if bad:
+        bits = [
+            "No pudimos leer este archivo como una planilla usable"
+            + (" (parece 1 sola columna)." if meta.get("n_cols") == 1 else ".")
+        ]
+        bits.append(
+            "Si exportaste desde Excel en español, el separador suele ser `;` y el decimal `,`."
+        )
+        for w in warnings:
+            if w not in bits:
+                bits.append(w)
+        st.error(" ".join(bits))
+    else:
+        for w in warnings:
+            st.warning(w)
+        if n_rows < 30:
+            st.warning(
+                f"Tu archivo tiene solo **{format_n_rows(n_rows)}**. "
+                "Con tan pocas filas es difícil encontrar patrones (recomendado: 30 o más)."
+            )
         cols = list(map(str, df.columns))
         st.success(
-            f"Leímos **{n_rows:,} filas** y **{len(cols)} columnas**: "
+            f"Leímos **{format_n_rows(n_rows)}** y **{len(cols)} columnas**: "
             + ", ".join(cols[:12])
             + ("…" if len(cols) > 12 else "")
             + ". ¿Se ve bien?"
         )
-    st.dataframe(df.head(8), width="stretch")
+    st.dataframe(dataframe_for_display(df.head(8)), width="stretch")
 
 
 def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
@@ -195,11 +202,10 @@ def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
         "blue": "#3D5A80",
         "gray": "#6c757d",
     }.get(h["color"], "#0F4C5C")
-    track = h["track"]
     st.markdown(
         f'<div class="finding-card" style="border-left-color:{border}">'
         f"<strong>{icon} {h['title_simple']}</strong><br/>"
-        f'<span class="muted">{h["label"]} · {track}</span><br/>'
+        f'<span class="muted">{h["label"]}</span><br/>'
         f"<b>Qué vimos:</b> {h['what']}<br/>"
         f"<b>Por qué importa:</b> {h['why']}<br/>"
         f"<b>Qué podés hacer:</b> {' · '.join(h['do'])}"
@@ -211,16 +217,21 @@ def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
         if h["snippet"]:
             st.caption(h["snippet"])
         if f.p_value is not None:
-            st.write(
-                f"p = {format_p_value(f.p_value)}"
-                + (
-                    f" · p corregido = {format_p_value(f.p_value_fdr)}"
+            from estacion.ux.presentation import format_p_clause
+
+            clause = format_p_clause(f.p_value)
+            extra = (
+                f" · p corregido = {format_p_value(f.p_value_fdr)}"
+                if f.p_value_fdr is not None and not str(format_p_value(f.p_value_fdr)).startswith("<")
+                else (
+                    f" · p corregido {format_p_value(f.p_value_fdr)}"
                     if f.p_value_fdr is not None
                     else ""
                 )
             )
+            st.write(clause + extra)
         st.write(f"**Método:** {f.method}")
-        st.write(f"**Magnitud:** {format_magnitude(f.magnitude)}")
+        st.write(f"**Magnitud:** {format_magnitude(f.magnitude, finding=f)}")
         ev = f.evidence or {}
         if isinstance(ev.get("group_means"), dict) and ev["group_means"]:
             gm = {str(k): float(v) for k, v in ev["group_means"].items()}
@@ -234,16 +245,12 @@ def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
             except Exception:
                 pass
         else:
-            pretty = {}
-            for k, v in ev.items():
-                label = COLUMN_LABELS_ES.get(str(k), str(k))
-                if isinstance(v, float):
-                    pretty[label] = format_number(v, digits=4 if abs(v) < 1 else 2)
-                elif not isinstance(v, (dict, list)):
-                    pretty[label] = v if v is not None else "—"
-            if pretty:
+            from estacion.ux.presentation import evidence_pairs_plain
+
+            pairs = evidence_pairs_plain(ev)
+            if pairs:
                 st.dataframe(
-                    pd.DataFrame([{"campo": k, "valor": v} for k, v in pretty.items()]),
+                    pd.DataFrame([{"campo": k, "valor": v} for k, v in pairs]),
                     width="stretch",
                     hide_index=True,
                 )
@@ -251,17 +258,23 @@ def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
         st.write("**Limitaciones:**", f.limitations)
 
 
-def render_finding_cards(findings: list[Finding], narratives: dict[str, str]) -> None:
+def render_finding_cards(
+    findings: list[Finding],
+    narratives: dict[str, str],
+    *,
+    show_empty: bool = True,
+) -> None:
     findings = dedupe_findings(findings)
     discoveries = [f for f in findings if finding_track(f) == "descubrimientos"]
     problems = [f for f in findings if finding_track(f) == "problemas"]
 
     if not discoveries and not problems:
-        st.info(
-            "No encontramos hallazgos destacados. "
-            "Puede ser que los datos estén muy parejos, o que haya pocas filas "
-            "para detectar patrones. Probá Explorar o el modo avanzado."
-        )
+        if show_empty:
+            st.info(
+                "No encontramos hallazgos destacados. "
+                "Puede ser que los datos estén muy parejos, o que haya pocas filas "
+                "para detectar patrones. Probá Explorar o el modo avanzado."
+            )
         return
 
     if discoveries:
@@ -283,8 +296,9 @@ def render_finding_cards(findings: list[Finding], narratives: dict[str, str]) ->
 def render_plain_summary(findings, profile, artifacts) -> None:
     bullets = build_plain_summary(findings, profile, artifacts)
     st.markdown("#### Resumen en lenguaje simple")
+    if not bullets and not findings:
+        return  # el vacío lo maneja un solo mensaje arriba
     if not bullets:
-        st.info("Todavía no hay un resumen para mostrar.")
         return
     for b in bullets:
         st.markdown(f"- {b}")

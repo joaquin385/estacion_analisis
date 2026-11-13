@@ -43,6 +43,8 @@ def generate_markdown_report(
             humanize_finding,
             format_magnitude,
             dedupe_findings,
+            plain_finding_line,
+            evidence_pairs_plain,
         )
 
         bullets = build_plain_summary(findings, profile, artifacts)
@@ -57,10 +59,7 @@ def generate_markdown_report(
             lines.append("")
             lines.append("Hallazgos principales:")
             for i, f in enumerate(top, 1):
-                h = humanize_finding(f)
-                lines.append(
-                    f"{i}. **{h['title_simple']}** — {format_magnitude(f.magnitude)} ({h['label']})"
-                )
+                lines.append(f"{i}. **{plain_finding_line(f)}**")
     except Exception:
         top = findings[:5]
         if top:
@@ -84,7 +83,7 @@ def generate_markdown_report(
         lines.append("")
         lines.append("Notas de granularidad:")
         for g in profile.granularity_notes:
-            lines.append(f"- {g}")
+            lines.append(f"- {_humanize_granularity(g)}")
     if profile.quality_issues:
         lines.append("")
         lines.append("Problemas de calidad:")
@@ -95,17 +94,33 @@ def generate_markdown_report(
     lines.append("## Hallazgos con evidencia")
     lines.append("")
     for f in findings:
-        lines.append(f"### {f.title}")
+        try:
+            from estacion.ux.presentation import humanize_finding, format_magnitude, evidence_pairs_plain
+
+            h = humanize_finding(f)
+            title = h["title_simple"]
+            mag = format_magnitude(f.magnitude, finding=f)
+            obs = h["what"]
+            pairs = evidence_pairs_plain(f.evidence)
+        except Exception:
+            title = f.title
+            mag = f.magnitude
+            obs = f.observation
+            pairs = []
+        lines.append(f"### {title}")
         lines.append("")
-        lines.append(f"- **Qué se observó:** {f.observation}")
-        lines.append(f"- **Magnitud:** {f.magnitude}")
+        lines.append(f"- **Qué se observó:** {obs}")
+        lines.append(f"- **Magnitud:** {mag}")
         lines.append(f"- **Método:** {f.method}")
         lines.append(f"- **Categoría / severidad:** {f.category.value} / {f.severity.value}")
         if f.statistically_significant is not None:
             lines.append(f"- **Estadísticamente significativo:** {f.statistically_significant}")
         if f.practically_important is not None:
             lines.append(f"- **Prácticamente importante:** {f.practically_important}")
-        lines.append(f"- **Evidencia (clave):** `{json.dumps(f.evidence, ensure_ascii=False, default=str)[:500]}`")
+        if pairs:
+            lines.append("- **Evidencia (clave):**")
+            for k, v in pairs:
+                lines.append(f"  - {k}: {v}")
         lines.append("- **Explicaciones alternativas:**")
         for a in f.alternative_explanations:
             lines.append(f"  - {a}")
@@ -139,3 +154,12 @@ def generate_markdown_report(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(md, encoding="utf-8")
     return md
+
+
+def _humanize_granularity(note: str) -> str:
+    s = str(note)
+    # Timedelta crudo → texto corto
+    s = s.replace("0 days ", "").replace("0 day ", "")
+    if "ratio único=" in s:
+        s = s.replace("ratio único=", "proporción de valores únicos ≈ ")
+    return s

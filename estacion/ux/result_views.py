@@ -7,7 +7,14 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from estacion.ux.presentation import format_number, format_p_value
+from estacion.ux.presentation import (
+    format_number,
+    format_p_value,
+    format_p_clause,
+    format_pct,
+    display_value,
+    dataframe_for_display,
+)
 
 
 FIELD_LABELS_ES = {
@@ -19,6 +26,7 @@ FIELD_LABELS_ES = {
     "pvalue": "p-valor",
     "p_value": "p-valor",
     "p_fdr": "p corregido",
+    "p_raw": "p sin corregir",
     "ci": "Intervalo de confianza",
     "r_squared": "R²",
     "n": "N",
@@ -30,6 +38,7 @@ FIELD_LABELS_ES = {
     "ok": "Ok",
     "n_missing": "Nº vacíos",
     "missing_pct": "% vacíos",
+    "missing": "Vacíos",
     "significant_fdr": "Significativo (corregido)",
     "method": "Método",
     "statistic": "Estadístico",
@@ -39,14 +48,55 @@ FIELD_LABELS_ES = {
     "ks_2samp": "Comparación de distribuciones",
     "alternative_explanations": "Otras explicaciones",
     "adjusted": "Detalle del ajuste",
+    "column": "Columna",
+    "type": "Tipo",
+    "tvd": "Distancia TV",
+    "cohens_d": "d de Cohen",
+    "practically_important": "Relevante en la práctica",
+    "mean": "Media",
+    "std": "Desvío",
+    "se": "Error estándar",
+    "ci_low": "IC inferior",
+    "ci_high": "IC superior",
+    "median": "Mediana",
+    "skewness": "Asimetría",
+    "kurtosis": "Curtosis",
+    "alpha": "Alfa",
+    "variable": "Variable",
 }
 
 
 METHOD_LABELS_ES = {
     "ks_2samp": "Comparación de distribuciones",
     "psi": "Índice de estabilidad poblacional (PSI)",
+    "chi2": "Chi-cuadrado",
     "ols_adjusted": "Regresión ajustada",
     "logit_adjusted": "Regresión logística ajustada",
+    "t-interval": "Intervalo t",
+    "wilson": "Wilson",
+    "welch_t": "Prueba t de Welch",
+    "mannwhitney_u": "Mann–Whitney",
+    "kruskal_wallis": "Kruskal–Wallis",
+    "anova_oneway": "ANOVA",
+}
+
+TYPE_LABELS_ES = {
+    "numeric": "Numérica",
+    "categorical": "Categórica",
+    "datetime": "Fecha/hora",
+    "other": "Otra",
+}
+
+ROLE_LABELS_ES = {
+    "identifier": "Identificador",
+    "datetime": "Fecha/hora",
+    "categorical": "Categórica",
+    "numeric": "Numérica",
+    "binary": "Binaria",
+    "text": "Texto",
+    "constant": "Constante",
+    "unknown": "Desconocido",
+    "target_candidate": "Posible objetivo",
 }
 
 
@@ -54,14 +104,12 @@ def _label_field(k: str) -> str:
     return FIELD_LABELS_ES.get(k, FIELD_LABELS_ES.get(k.lower(), k))
 
 
-def _fmt_val(v: Any) -> Any:
-    if v is None:
-        return "—"
-    if isinstance(v, float):
-        return format_number(v, digits=4 if abs(v) < 1 else 2)
-    if isinstance(v, str) and v.lower() in {"none", "nan"}:
-        return "—"
-    return v
+def _fmt_val(v: Any, *, as_p: bool = False, as_pct: bool = False) -> Any:
+    if as_p and isinstance(v, (int, float)):
+        return format_p_value(float(v))
+    if as_pct and isinstance(v, (int, float)):
+        return format_pct(float(v), digits=1)
+    return display_value(v)
 
 
 def dict_to_table(d: dict[str, Any], exclude: set[str] | None = None) -> pd.DataFrame:
@@ -70,7 +118,13 @@ def dict_to_table(d: dict[str, Any], exclude: set[str] | None = None) -> pd.Data
     for k, v in d.items():
         if k in exclude or isinstance(v, (dict, list, pd.DataFrame)):
             continue
-        rows.append({"campo": _label_field(str(k)), "valor": _fmt_val(v)})
+        if k == "ok":
+            continue  # no mostrar "Ok True"
+        label = _label_field(str(k))
+        if k in {"pvalue", "p_value", "p_fdr", "p_raw"}:
+            rows.append({"campo": label, "valor": format_p_value(v if isinstance(v, (int, float)) else None)})
+        else:
+            rows.append({"campo": label, "valor": _fmt_val(v)})
     return pd.DataFrame(rows)
 
 
@@ -79,9 +133,55 @@ def rename_df_columns_es(df: pd.DataFrame) -> pd.DataFrame:
         return df
     mapping = {c: _label_field(str(c)) for c in df.columns}
     out = df.rename(columns=mapping)
-    for col in out.columns:
-        if str(col) in {"Método", "method", "Method"}:
+    for col in list(out.columns):
+        cl = str(col).lower()
+        if col in {"Método", "method", "Method"} or cl == "método":
             out[col] = out[col].map(lambda x: METHOD_LABELS_ES.get(str(x), x))
+        if col in {"Tipo", "type", "Type"} or cl == "tipo":
+            out[col] = out[col].map(lambda x: TYPE_LABELS_ES.get(str(x), x))
+        if "p-valor" in cl or cl in {"p-valor", "p corregido", "p sin corregir"}:
+            out[col] = out[col].map(
+                lambda x: format_p_value(float(x)) if isinstance(x, (int, float)) else display_value(x)
+            )
+        if "% vacíos" in str(col) or "missing_pct" in cl or cl.endswith("pct"):
+            out[col] = out[col].map(
+                lambda x: format_pct(float(x), digits=1) if isinstance(x, (int, float)) else display_value(x)
+            )
+    return dataframe_for_display(out)
+
+
+def descriptive_table_es(report: dict[str, Any]) -> pd.DataFrame:
+    """Descriptivos con encabezados en español."""
+    if not report:
+        return pd.DataFrame()
+    df = pd.DataFrame(report).T.reset_index().rename(columns={"index": "variable"})
+    # orden preferido
+    order = [
+        "variable",
+        "n",
+        "mean",
+        "std",
+        "ci_low",
+        "ci_high",
+        "median",
+        "skewness",
+        "kurtosis",
+        "missing",
+        "se",
+        "alpha",
+        "method",
+    ]
+    cols = [c for c in order if c in df.columns] + [c for c in df.columns if c not in order]
+    df = df[cols]
+    return rename_df_columns_es(df)
+
+
+def humanize_granularity_notes(notes: list[str] | None) -> list[str]:
+    out = []
+    for n in notes or []:
+        s = str(n).replace("0 days ", "").replace("0 day ", "")
+        s = s.replace("ratio único=", "proporción de valores únicos ≈ ")
+        out.append(s)
     return out
 
 
@@ -182,7 +282,7 @@ def humanize_causal_adjusted(adj: dict[str, Any]) -> None:
     else:
         st.success(
             f"Asociación ajustada ≈ {format_number(coef)} "
-            f"(p = {format_p_value(p)}). No demuestra causalidad."
+            f"({format_p_clause(p)}). No demuestra causalidad."
         )
         if treatment and "_" in str(treatment):
             st.caption(
@@ -190,15 +290,16 @@ def humanize_causal_adjusted(adj: dict[str, Any]) -> None:
                 "(una categoría frente al resto). No implica causalidad."
             )
 
-    # Tabla amigable (sin anidar dicts crudos)
     flat: dict[str, Any] = {}
     for k, v in adj.items():
-        if k in {"summary_text", "model", "residuals", "alternative_explanations"}:
+        if k in {"summary_text", "model", "residuals", "alternative_explanations", "ok"}:
             continue
         if k == "adjusted" and isinstance(v, dict):
             for nk, nv in v.items():
                 if nk in {"model"}:
                     flat["model"] = METHOD_LABELS_ES.get(str(nv), nv)
+                elif nk in {"pvalue", "p_value"}:
+                    flat["p_value"] = nv
                 elif not isinstance(nv, (dict, list)):
                     flat[nk] = nv
             continue

@@ -67,6 +67,8 @@ def _build_prompt(f: Finding) -> str:
 
 
 def _template_narrative(f: Finding) -> str:
+    from estacion.ux.presentation import format_magnitude, humanize_finding
+
     sig = ""
     if f.statistically_significant is True:
         sig = "El resultado es estadísticamente significativo bajo el criterio usado. "
@@ -78,11 +80,13 @@ def _template_narrative(f: Finding) -> str:
     elif f.practically_important is False:
         prac = "La magnitud puede ser limitada en términos prácticos. "
 
+    h = humanize_finding(f)
+    mag = format_magnitude(f.magnitude, finding=f)
     alts = "; ".join(f.alternative_explanations[:3])
     follow = "; ".join(f.follow_up[:2])
     return (
-        f"{f.observation} {sig}{prac}"
-        f"Método: {f.method}. Magnitud: {f.magnitude}. "
+        f"{h['what']} {sig}{prac}"
+        f"Método: {f.method}. Magnitud: {mag}. "
         f"Explicaciones alternativas: {alts}. "
         f"Para confirmar o refutar: {follow}."
     )
