@@ -165,21 +165,17 @@ h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 70
   padding: 0.4rem 0.6rem 0.2rem; margin: 0.6rem 0 0.8rem;
 }
 /* Maquillaje frágil del uploader (Streamlit no traduce el chrome en inglés) */
-[data-testid="stFileUploaderDropzone"] small {
-  visibility: hidden; position: relative;
+[data-testid="stFileUploaderDropzone"] small,
+[data-testid="stFileUploaderDropzone"] [data-testid="stFileUploaderFileData"] {
+  font-size: 0 !important;
 }
 [data-testid="stFileUploaderDropzone"] small::after {
   content: "CSV, XLSX · hasta 200 MB";
-  visibility: visible; position: absolute; left: 0; top: 0;
-  color: #64748B; font-size: 0.85rem;
+  font-size: 0.85rem !important;
+  color: #64748B;
 }
-[data-testid="stFileUploaderDropzone"] [data-testid="stMarkdownContainer"] p,
-[data-testid="stFileUploaderDropzone"] span[data-testid="stFileUploaderDropzoneInstructions"] span {
+section[data-testid="stFileUploader"] button + div small {
   font-size: 0 !important;
-}
-[data-testid="stFileUploaderDropzone"] [data-testid="stMarkdownContainer"] p::after {
-  content: "Arrastrá tu archivo acá";
-  font-size: 0.95rem !important; color: #0F172A; font-weight: 600;
 }
 div[data-testid="stMetric"] {
   background: #fff; border: 1px solid #E5E9F0; border-radius: 16px;

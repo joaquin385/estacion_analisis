@@ -316,19 +316,20 @@ def _render_technical_detail(f: Finding, narratives: dict[str, str], h: dict[str
 
 
 def _mini_chart_for_finding(f: Finding, ctx: CopyContext | None = None):
+    from estacion.ux.presentation import friendly_column, looks_like_money_column
+
     ev = f.evidence or {}
     means = ev.get("group_means")
     if isinstance(means, dict) and means:
         gap = group_vs_rest_gap(f)
-        var = (f.variables[0] if f.variables else "valor")
+        var = f.variables[0] if f.variables else "valor"
+        var_l = friendly_column(str(var), ctx)
         prefix = ""
-        if ctx and ctx.money_unit in {"$", "USD", "ARS"} and (
-            "revenue" in str(var).lower() or "factur" in str(var).lower()
-        ):
+        if ctx and ctx.money_unit in {"$", "USD", "ARS"} and looks_like_money_column(str(var)):
             prefix = "$"
         return group_means_bar(
             {str(k): float(v) for k, v in means.items()},
-            title=f"Promedio de {var} por grupo",
+            title=f"Promedio de {var_l} por grupo",
             y_title="Promedio",
             x_title="Grupo",
             highlight=gap["top_name"] if gap else None,
@@ -473,15 +474,25 @@ def render_summary_header(
     *,
     ctx: CopyContext | None = None,
 ) -> None:
+    from estacion.ux.presentation import friendly_dataset_name
+
     headline, sub = build_summary_headline(findings, profile, artifacts, ctx)
-    st.markdown(f'<p class="ea-sec">{profile.name} · análisis listo</p>', unsafe_allow_html=True)
+    label = (ctx.dataset_label if ctx and ctx.dataset_label else None) or friendly_dataset_name(profile.name)
+    st.markdown(f'<p class="ea-sec">{label} · análisis listo</p>', unsafe_allow_html=True)
     st.markdown(f'<h2 class="ea-headline">{headline}</h2>', unsafe_allow_html=True)
     st.markdown(f'<p class="ea-subhead">{sub}</p>', unsafe_allow_html=True)
     kpis = build_business_kpis(findings, profile, df, ctx)
     cols = st.columns(4)
     for col, kpi in zip(cols, kpis):
         with col:
-            st.metric(kpi["label"], kpi["value"], delta=kpi["delta"] or None, border=True)
+            # delta_arrow off: el subtítulo no es una variación (+/-)
+            st.metric(
+                kpi["label"],
+                kpi["value"],
+                delta=kpi["delta"] or None,
+                delta_arrow="off",
+                border=True,
+            )
 
 
 def render_plain_summary(findings, profile, artifacts, ctx: CopyContext | None = None) -> None:
