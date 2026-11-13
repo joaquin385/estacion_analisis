@@ -83,6 +83,7 @@ try:
         render_load_preview,
         render_finding_cards,
         render_plain_summary,
+        render_summary_header,
         render_segmentation_human,
         DEMO_SELECT_KEY,
         WELCOME_UPLOAD_KEY,
@@ -93,6 +94,7 @@ except ImportError:  # streamlit a veces pone app/ en sys.path
         render_load_preview,
         render_finding_cards,
         render_plain_summary,
+        render_summary_header,
         render_segmentation_human,
         DEMO_SELECT_KEY,
         WELCOME_UPLOAD_KEY,
@@ -100,7 +102,7 @@ except ImportError:  # streamlit a veces pone app/ en sys.path
 import json
 
 st.set_page_config(
-    page_title="Estación Universal de Análisis",
+    page_title="Estación de Análisis",
     page_icon="◈",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -108,35 +110,201 @@ st.set_page_config(
 
 CUSTOM_CSS = """
 <style>
-html, body, [class*="css"] {
-  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block');
+/* Inter solo en texto — NUNCA en iconos Material Symbols */
+html, body, .stApp,
+[data-testid="stMarkdownContainer"],
+[data-testid="stWidgetLabel"],
+button, input, textarea, label, p, li, h1, h2, h3, h4,
+[data-testid="stMetricLabel"],
+[data-testid="stMetricValue"],
+[data-testid="stMetricDelta"] {
+  font-family: Inter, "Segoe UI", sans-serif !important;
 }
-h1, h2, h3 { color: #0F4C5C !important; }
-.stApp {
-  background:
-    radial-gradient(1200px 500px at 10% -10%, #d8eee8 0%, transparent 55%),
-    radial-gradient(900px 400px at 100% 0%, #f7e6d4 0%, transparent 50%),
-    #f7f4ef;
+/* Restaurar ligaduras de iconos (Streamlit usa text content = nombre del glifo) */
+[data-testid="stIconMaterial"],
+span[data-testid="stIconMaterial"],
+.material-symbols-rounded,
+.material-symbols-outlined,
+.material-symbols-sharp,
+span[class*="material-symbols"],
+i.material-icons,
+button [data-testid="stIconMaterial"] {
+  font-family: "Material Symbols Rounded" !important;
+  font-style: normal !important;
+  font-weight: 400 !important;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24 !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+  speak: never;
+  -webkit-font-feature-settings: "liga" !important;
+  font-feature-settings: "liga" !important;
 }
-.finding-card {
-  background: rgba(255,255,255,0.88);
-  border-left: 5px solid #E36414;
-  padding: 1.05rem 1.15rem;
-  margin-bottom: 1rem;
-  border-radius: 0 12px 12px 0;
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stWidgetLabel"],
+label {
+  font-size: 15.5px !important;
+  line-height: 1.5;
 }
+.stApp { background: #F6F8FB; color: #0F172A; }
+/* Header mínimo pero VISIBLE: ahí vive el botón que abre la sidebar */
+header[data-testid="stHeader"] {
+  background: rgba(246, 248, 251, 0.92) !important;
+  border-bottom: 1px solid #E5E9F0 !important;
+  box-shadow: none !important;
+}
+/* Ocultar solo decoración de toolbar; nunca el control de sidebar */
+header[data-testid="stHeader"] [data-testid="stToolbarActions"],
+header[data-testid="stHeader"] [data-testid="stAppDeployButton"],
+header[data-testid="stHeader"] #MainMenu {
+  display: none !important;
+}
+[data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"] button[kind="header"] {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+[data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"],
+header[data-testid="stHeader"] [data-testid="stIconMaterial"] {
+  font-size: 1.35rem !important;
+  line-height: 1 !important;
+  color: #334155 !important;
+}
+h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 700 !important; }
 .brand {
-  font-size: 1.85rem;
-  letter-spacing: 0.02em;
-  color: #0F4C5C;
-  font-weight: 650;
+  font-size: 1.15rem !important;
+  letter-spacing: -0.01em;
+  color: #0F172A;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
 }
-.muted { color: #2a3439; font-size: 1rem; }
+.brand:before {
+  content: "";
+  width: 26px; height: 26px; border-radius: 8px;
+  background: linear-gradient(135deg, #4F46E5, #06B6D4);
+  flex: none;
+}
+.ea-topbar { margin-bottom: 0.75rem; }
+.ea-eyebrow {
+  display: inline-block;
+  background: #EEF2FF; color: #4F46E5;
+  font-weight: 600; font-size: 0.8rem !important;
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  margin-bottom: 0.75rem;
+}
+.ea-hero-title {
+  font-size: clamp(1.7rem, 4vw, 2.6rem) !important;
+  line-height: 1.12 !important;
+  letter-spacing: -0.03em !important;
+  color: #0F172A !important;
+  margin: 0.2rem 0 0.6rem 0 !important;
+}
+.ea-lead { color: #475569; font-size: 1.05rem !important; line-height: 1.5; max-width: 40rem; }
+.ea-headline {
+  font-size: clamp(1.45rem, 3vw, 1.95rem) !important;
+  line-height: 1.2 !important;
+  letter-spacing: -0.025em !important;
+  color: #0F172A !important;
+  margin: 0.15rem 0 0.4rem 0 !important;
+}
+.ea-subhead { color: #475569; font-size: 1.02rem !important; line-height: 1.5; max-width: 48rem; }
+.ea-sec {
+  font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 0.08em;
+  color: #64748B; font-weight: 600; margin: 0.4rem 0 0.6rem 0;
+}
+.ea-lbl { color: #94A3B8; font-size: 0.8rem !important; font-weight: 600; margin: 0.55rem 0 0.1rem 0; }
+.ea-pill {
+  display: inline-block; background: #EEF2FF; color: #4F46E5;
+  font-size: 0.75rem !important; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 999px;
+  margin-right: 0.4rem;
+}
+.ea-conf { color: #059669; font-size: 0.8rem !important; font-weight: 500; }
+.ea-dropzone {
+  background: #fff; border: 2px dashed #C7D2FE; border-radius: 18px;
+  padding: 0.4rem 0.6rem 0.2rem; margin: 0.6rem 0 0.8rem;
+}
+[data-testid="stFileUploaderDropzone"] small,
+[data-testid="stFileUploaderDropzone"] [data-testid="stFileUploaderFileData"] {
+  font-size: 0 !important;
+}
+[data-testid="stFileUploaderDropzone"] small::after {
+  content: "CSV, XLSX · hasta 200 MB";
+  font-size: 0.85rem !important;
+  color: #64748B;
+}
+section[data-testid="stFileUploader"] button + div small { font-size: 0 !important; }
+div[data-testid="stMetric"] {
+  background: #fff; border: 1px solid #E5E9F0; border-radius: 16px;
+  padding: 0.85rem 1rem;
+}
+/* Números KPI grandes (no heredar 15.5px del body) */
+div[data-testid="stMetricValue"],
+div[data-testid="stMetricValue"] * {
+  font-size: 2.05rem !important;
+  font-weight: 700 !important;
+  line-height: 1.15 !important;
+  color: #0F172A !important;
+}
+div[data-testid="stMetricLabel"] p,
+div[data-testid="stMetricLabel"] {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  line-height: 1.25 !important;
+  font-size: 0.82rem !important;
+}
+/* Caption dentro de la card: delta gris, sin flecha, sin truncar */
+div[data-testid="stMetricDelta"] {
+  color: #64748B !important;
+  font-size: 0.78rem !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  max-width: 100% !important;
+  line-height: 1.25 !important;
+}
+div[data-testid="stMetricDelta"] p,
+div[data-testid="stMetricDelta"] span,
+div[data-testid="stMetricDelta"] > div {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  line-height: 1.25 !important;
+}
+div[data-testid="stMetricDelta"] svg { display: none !important; }
+div[data-testid="stMetricDelta"] [data-testid="stMetricDeltaIcon-Up"],
+div[data-testid="stMetricDelta"] [data-testid="stMetricDeltaIcon-Down"] {
+  display: none !important;
+}
 @media (max-width: 768px) {
-  div[data-testid="stMetric"] { padding: 0.15rem 0.25rem; }
-  div[data-testid="stMetric"] label { font-size: 0.75rem !important; }
-  div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
-  .brand { font-size: 1.35rem; }
+  div[data-testid="stMetricLabel"] p,
+  div[data-testid="stMetricLabel"] {
+    font-size: 0.72rem !important;
+    white-space: normal !important;
+  }
+  div[data-testid="stMetricValue"],
+  div[data-testid="stMetricValue"] * { font-size: 1.45rem !important; }
+  .brand { font-size: 1.05rem !important; }
+  .ea-hero-title { font-size: 1.55rem !important; }
+  .ea-headline { font-size: 1.35rem !important; }
+  /* KPIs 2×2 en 390px */
+  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) {
+    flex-wrap: nowrap !important;
+    flex-direction: row !important;
+    gap: 0.45rem !important;
+  }
+  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) > div[data-testid="stColumn"] {
+    min-width: 0 !important;
+    flex: 1 1 50% !important;
+    width: 50% !important;
+  }
 }
 </style>
 """
@@ -175,7 +343,7 @@ DEMO_LABELS = {
     "financial": "Finanzas (ejemplo)",
     "operational": "Operaciones (ejemplo)",
     "segments": "Segmentos (ejemplo)",
-    "causal_confounded": "Causal confounded (prueba)",
+    "causal_confounded": "Causal con confusor (prueba)",
     "nonlinear_null": "Relación nula no lineal (prueba)",
 }
 DOMAIN_LABELS = {k: ("General" if k == "default" else k.capitalize()) for k in DOMAIN_PRESETS}
@@ -241,45 +409,93 @@ def _run_discovery(df, selected, quality_domain, use_ollama):
 
 
 def _render_explore(df, profile):
-    st.subheader("Explorar tus datos")
+    from estacion.ux.presentation import friendly_column
+
+    st.subheader("Explorar")
+    st.caption("Mirálos vos: histograma, cajas y relaciones.")
     defaults = default_explore_columns(profile)
     cols = list(df.columns)
     plot_cols = [c for c in cols if c not in set(profile.identifier_columns)] or cols
+
+    def _lab(c: str) -> str:
+        return friendly_column(c)
+
     left, right = st.columns(2)
     with left:
         hist_default = defaults["hist"] if defaults["hist"] in plot_cols else plot_cols[0]
         hist_idx = plot_cols.index(hist_default) if hist_default in plot_cols else 0
-        col = st.selectbox("¿Cómo se reparten los valores?", plot_cols, index=hist_idx, key="hist_col")
+        col = st.selectbox(
+            "¿Cómo se reparten los valores?",
+            plot_cols,
+            index=hist_idx,
+            key="hist_col",
+            format_func=_lab,
+        )
         color_opts = ["—"] + [c for c in profile.categorical_columns if c in plot_cols]
-        color = st.selectbox("Color (opcional)", color_opts, key="hist_color")
-        st.plotly_chart(histogram(df, col, None if color == "—" else color), width="stretch")
+        color = st.selectbox(
+            "Color (opcional)",
+            color_opts,
+            key="hist_color",
+            format_func=lambda c: "—" if c == "—" else _lab(c),
+        )
+        st.plotly_chart(
+            histogram(df, col, None if color == "—" else color, label=_lab(col)),
+            width="stretch",
+        )
     with right:
         nums = [c for c in (profile.numeric_columns or plot_cols) if c not in set(profile.identifier_columns)]
         nums = nums or plot_cols
         x_def = defaults["scatter_x"] if defaults["scatter_x"] in nums else nums[0]
         y_cands = [c for c in nums if c != x_def] or nums
         y_def = defaults["scatter_y"] if defaults["scatter_y"] in y_cands else y_cands[0]
-        x = st.selectbox("¿Se mueven juntas? Eje X", nums, index=nums.index(x_def), key="sx")
+        x = st.selectbox(
+            "¿Se mueven juntas? Eje X",
+            nums,
+            index=nums.index(x_def),
+            key="sx",
+            format_func=_lab,
+        )
+        y_opts = [c for c in nums if c != x] or nums
         y = st.selectbox(
             "Eje Y",
-            [c for c in nums if c != x] or nums,
-            index=max(0, ([c for c in nums if c != x] or nums).index(y_def)
-                      if y_def in ([c for c in nums if c != x] or nums) else 0),
+            y_opts,
+            index=max(0, y_opts.index(y_def) if y_def in y_opts else 0),
             key="sy",
+            format_func=_lab,
         )
-        st.plotly_chart(scatter(df, x, y, trendline=True), width="stretch")
+        st.plotly_chart(
+            scatter(df, x, y, trendline=True, x_label=_lab(x), y_label=_lab(y)),
+            width="stretch",
+        )
 
     if len(profile.numeric_columns) >= 2:
         corr = correlation_analysis(df, profile.numeric_columns[:20])
+        labels = {c: _lab(c) for c in corr["spearman_matrix"].columns}
         st.plotly_chart(
-            correlation_heatmap(corr["spearman_matrix"], "Mapa de relaciones (más oscuro = más relacionadas)"),
+            correlation_heatmap(
+                corr["spearman_matrix"],
+                "Mapa de relaciones (más oscuro = más relacionadas)",
+                labels=labels,
+            ),
             width="stretch",
         )
 
     if profile.datetime_columns and profile.numeric_columns:
-        dcol = st.selectbox("Fecha", profile.datetime_columns)
-        vcol = st.selectbox("Valor temporal", profile.numeric_columns, key="ts_val")
-        st.plotly_chart(time_series_plot(df, dcol, vcol), width="stretch")
+        dcol = st.selectbox(
+            "Fecha",
+            profile.datetime_columns,
+            format_func=_lab,
+        )
+        vcol = st.selectbox(
+            "Valor temporal",
+            profile.numeric_columns,
+            key="ts_val",
+            format_func=_lab,
+        )
+        st.plotly_chart(
+            time_series_plot(df, dcol, vcol, value_label=_lab(vcol)),
+            width="stretch",
+        )
         with st.expander("Detalle temporal y pronóstico", expanded=False):
             tres = temporal_analysis(df, dcol, vcol)
             st.write(
@@ -326,7 +542,19 @@ def _render_explore(df, profile):
                     st.warning(fc.get("reason"))
 
 
-def _render_informe(df, selected, store):
+def _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=None) -> bytes:
+    out_dir = ROOT / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    unit = getattr(ctx, "money_unit", "unidades") if ctx else "unidades"
+    cache_key = f"_pdf_bytes::{selected}::{len(findings)}::{profile.n_rows}::{unit}"
+    if cache_key not in st.session_state:
+        pdf_path = out_dir / f"{selected}_informe.pdf"
+        generate_pdf_report(df, profile, findings, pdf_path, artifacts, ctx=ctx)
+        st.session_state[cache_key] = pdf_path.read_bytes()
+    return st.session_state[cache_key]
+
+
+def _render_informe(df, selected, store, ctx=None):
     st.subheader("Informe")
     profile = st.session_state.get("profile")
     findings = st.session_state.get("findings")
@@ -337,16 +565,11 @@ def _render_informe(df, selected, store):
     out_dir = ROOT / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # PDF en un solo clic: generar (o reutilizar cache de sesión) y ofrecer download directo.
-    cache_key = f"_pdf_bytes::{selected}::{len(findings)}::{profile.n_rows}"
-    if cache_key not in st.session_state:
-        pdf_path = out_dir / f"{selected}_informe.pdf"
-        with st.spinner("Preparando PDF…"):
-            generate_pdf_report(df, profile, findings, pdf_path, artifacts)
-            st.session_state[cache_key] = pdf_path.read_bytes()
+    with st.spinner("Preparando PDF…"):
+        pdf_data = _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=ctx)
     st.download_button(
         "Descargar informe (PDF)",
-        data=st.session_state[cache_key],
+        data=pdf_data,
         file_name=f"{selected}_informe.pdf",
         mime="application/pdf",
         type="primary",
@@ -354,12 +577,12 @@ def _render_informe(df, selected, store):
     )
 
     with st.expander("Otros formatos"):
-        md = generate_markdown_report(profile, findings, artifacts)
+        md = generate_markdown_report(profile, findings, artifacts, ctx=ctx)
         st.download_button("Descargar Markdown", md, file_name=f"{selected}_informe.md")
         js = json.dumps([f.to_dict() for f in findings], ensure_ascii=False, indent=2, default=str)
         st.download_button("Descargar hallazgos (JSON)", js, file_name=f"{selected}_hallazgos.json")
         if st.button("También guardar en carpeta outputs/"):
-            generate_markdown_report(profile, findings, artifacts, out_dir / f"{selected}_informe.md")
+            generate_markdown_report(profile, findings, artifacts, out_dir / f"{selected}_informe.md", ctx=ctx)
             export_findings_json(findings, out_dir / f"{selected}_hallazgos.json")
             st.success("Guardado en outputs/")
 
@@ -374,21 +597,87 @@ def _render_informe(df, selected, store):
             st.success(f"Análisis guardado: {meta.id}")
 
     st.markdown("#### Vista previa del informe")
-    # Una sola vez: el markdown ya incluye el resumen en lenguaje simple.
-    st.markdown(generate_markdown_report(profile, findings, artifacts)[:3500])
+    st.markdown(generate_markdown_report(profile, findings, artifacts, ctx=ctx)[:4000])
+
+
+def _render_topbar(
+    *,
+    show_clear: bool = False,
+    show_pdf: bool = False,
+    df=None,
+    selected: str | None = None,
+    ctx=None,
+) -> None:
+    """Barra superior compacta: marca + acciones (maqueta A)."""
+    if show_clear or show_pdf:
+        left, mid, right = st.columns([3.2, 1.15, 1.25])
+    else:
+        left, mid, right = st.columns([1.0]), None, None
+        left = left[0]
+    with left:
+        st.markdown('<div class="brand ea-topbar">Estación de Análisis</div>', unsafe_allow_html=True)
+    if not show_clear and not show_pdf:
+        return
+
+    def _on_clear() -> None:
+        st.session_state["_reset_uploads"] = True
+        st.session_state.pop("repair_uploaded_files", None)
+        st.session_state.pop("_prefer_loaded_upload", None)
+
+    if show_clear and mid is not None:
+        with mid:
+            st.button("Subir otro archivo", on_click=_on_clear, key="top_clear_upload", width="stretch")
+    if show_pdf and right is not None:
+        with right:
+            profile = st.session_state.get("profile")
+            findings = st.session_state.get("findings")
+            artifacts = st.session_state.get("artifacts", {})
+            if profile is not None and findings is not None and df is not None and selected:
+                try:
+                    data = _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=ctx)
+                    st.download_button(
+                        "Descargar PDF",
+                        data=data,
+                        file_name=f"{selected}_informe.pdf",
+                        mime="application/pdf",
+                        type="primary",
+                        key="pdf_dl_topbar",
+                        width="stretch",
+                    )
+                except Exception:
+                    st.caption("PDF no disponible")
+
+
+def _build_copy_context(df, profile, selected: str):
+    from estacion.ux.presentation import (
+        CopyContext,
+        friendly_dataset_name,
+        load_dictionary_units,
+        resolve_money_unit,
+    )
+
+    override = st.session_state.get("money_unit_override")
+    # Solo cargar diccionario en Auto (match exacto de stem, no substring "venta")
+    units: dict = {}
+    if override in (None, "Auto"):
+        units = load_dictionary_units(name_hint=selected or getattr(profile, "name", None))
+        override = None
+    target = None
+    if profile is not None:
+        target = (profile.possible_targets or profile.numeric_columns or [None])[0]
+    money = resolve_money_unit(column=target, dictionary_units=units or None, override=override)
+    return CopyContext(
+        df=df,
+        profile=profile,
+        money_unit=money,
+        dataset_label=friendly_dataset_name(selected or getattr(profile, "name", None)),
+    )
 
 
 def main():
     # Reset de uploads antes de instanciar widgets (on_click del botón "Quitar…").
     if st.session_state.pop("_reset_uploads", False):
         _clear_loaded_data()
-
-    st.markdown('<div class="brand">Estación Universal de Análisis de Datos</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="muted">Subí tu planilla y descubrí problemas, patrones y oportunidades. '
-        "Los números salen de código estadístico; la IA (opcional) solo redacta.</p>",
-        unsafe_allow_html=True,
-    )
 
     store = SessionStore(ROOT / "outputs" / "sessions")
 
@@ -400,6 +689,12 @@ def main():
             accept_multiple_files=True,
             help="También acepta CSV de Excel en español (separador ; y decimal ,).",
             key="sidebar_uploaded_files",
+        )
+        st.selectbox(
+            "Unidad monetaria",
+            ["Auto", "$", "unidades"],
+            key="money_unit_override",
+            help="Auto usa el diccionario de datos si tiene unidad; si no, 'unidades'.",
         )
         demo_keys = list(DEMO_LABELS.keys())
         # El botón de la portada (on_click) setea DEMO_SELECT_KEY antes de este
@@ -526,6 +821,7 @@ def main():
         load_metas = st.session_state.get("load_metas") or {}
 
     if not tables:
+        _render_topbar()
         render_welcome(demo_select_key=DEMO_SELECT_KEY)
         return
 
@@ -536,56 +832,46 @@ def main():
     from_upload = st.session_state.get("load_source") == "upload"
     bad_parse = bool(meta.get("suspicious_parse") and meta.get("n_cols") == 1)
 
-    def _on_clear_upload() -> None:
-        st.session_state["_reset_uploads"] = True
-        st.session_state.pop("repair_uploaded_files", None)
-        st.session_state.pop("_prefer_loaded_upload", None)
-
     auto_once = st.session_state.pop("_auto_analyze_once", False)
     run_analyze_now = bool(
         run_btn or auto_once or st.session_state.pop("_run_analyze", False)
     )
-    show_analyze_prompt = not _analysis_ready(selected, quality_domain) and not run_analyze_now
+    analysis_ready = _analysis_ready(selected, quality_domain)
+    show_analyze_prompt = not analysis_ready and not run_analyze_now
     # Evitar tabla duplicada: expander (mensajes) + preview bajo Analizar.
     preview_table_in_expander = not (from_upload and show_analyze_prompt and not bad_parse)
 
-    if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
-        with st.expander(
-            "Vista previa de la carga",
-            expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1,
-        ):
-            render_load_preview(df, meta, show_table=preview_table_in_expander)
-
-    if from_upload or bad_parse:
-        c_clear, c_up = st.columns([1, 2])
-        with c_clear:
-            st.button(
-                "Quitar archivo / Volver al inicio",
-                on_click=_on_clear_upload,
-                key="btn_clear_upload",
-            )
+    # Marca / topbar SIEMPRE primero (antes de Vista previa / Analizar)
+    if show_analyze_prompt or (not analysis_ready and not run_analyze_now):
+        _render_topbar(show_clear=from_upload or bad_parse)
+        if from_upload or meta.get("warnings") or meta.get("suspicious_parse") or bad_parse:
+            with st.expander(
+                "Vista previa de la carga",
+                expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1,
+            ):
+                render_load_preview(df, meta, show_table=preview_table_in_expander)
         if bad_parse:
-            with c_up:
-                st.file_uploader(
-                    "Subir otro archivo",
-                    type=["csv", "xlsx", "xls"],
-                    accept_multiple_files=True,
-                    key="repair_uploaded_files",
-                    help="Elegí otro CSV o Excel con separador correcto.",
-                )
+            st.file_uploader(
+                "Subir otro archivo",
+                type=["csv", "xlsx", "xls"],
+                accept_multiple_files=True,
+                key="repair_uploaded_files",
+                help="Elegí otro CSV o Excel con separador correcto.",
+            )
             # El próximo run prioriza repair_uploaded_files arriba y descarta el inválido.
             st.stop()
+        if len(tables) > 1 and advanced:
+            with st.expander("Relaciones entre tablas"):
+                graph = build_relationship_graph(tables)
+                st.write(graph.get("note"))
+                st.dataframe(
+                    pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(),
+                    width="stretch",
+                )
 
-    if len(tables) > 1 and advanced:
-        with st.expander("Relaciones entre tablas"):
-            graph = build_relationship_graph(tables)
-            st.write(graph.get("note"))
-            st.dataframe(pd.DataFrame(graph["edges"]) if graph["edges"] else pd.DataFrame(), width="stretch")
+        def _on_main_analyze() -> None:
+            st.session_state["_run_analyze"] = True
 
-    def _on_main_analyze() -> None:
-        st.session_state["_run_analyze"] = True
-
-    if show_analyze_prompt:
         st.info("Datos listos. Pulsá **Analizar** para generar el resumen.")
         st.button(
             "Analizar",
@@ -610,6 +896,16 @@ def main():
     artifacts = st.session_state["artifacts"]
     narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
 
+    copy_ctx = _build_copy_context(df, profile, selected)
+    # Topbar primero también en el resumen listo (sin botón duplicado de volver)
+    _render_topbar(
+        show_clear=True,
+        show_pdf=True,
+        df=df,
+        selected=selected,
+        ctx=copy_ctx,
+    )
+
     if profile.n_rows < 30 and not bad_parse:
         from estacion.ux.presentation import format_n_rows
 
@@ -619,26 +915,19 @@ def main():
         )
 
     if not advanced:
-        tabs = st.tabs(["Resumen", "Explorar tus datos", "Informe"])
+        tabs = st.tabs(["Resumen", "Explorar", "Informe"])
         with tabs[0]:
-            st.subheader("Resumen")
-            from estacion.ux.presentation import format_int_es
+            from estacion.ux.presentation import EMPTY_FINDINGS_MESSAGE
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Filas", format_int_es(profile.n_rows))
-            c2.metric("Columnas", format_int_es(profile.n_cols))
-            c3.metric("Hallazgos", format_int_es(len(findings)))
             empty = not findings
             if empty:
-                st.info(
-                    "No encontramos hallazgos automáticos. "
-                    "Con pocas filas o datos muy parejos es normal. "
-                    "Probá Explorar para mirar los números a ojo."
-                )
+                st.info(EMPTY_FINDINGS_MESSAGE)
             else:
-                render_plain_summary(findings, profile, artifacts)
-                st.markdown("---")
-                render_finding_cards(findings, narratives, show_empty=False)
+                render_summary_header(findings, profile, artifacts, df, ctx=copy_ctx)
+                st.markdown("")
+                render_finding_cards(
+                    findings, narratives, show_empty=False, ctx=copy_ctx, layout="summary"
+                )
         with tabs[1]:
             _render_explore(df, profile)
             with st.expander("Calidad rápida"):
@@ -657,7 +946,7 @@ def main():
                     width="stretch",
                 )
         with tabs[2]:
-            _render_informe(df, selected, store)
+            _render_informe(df, selected, store, ctx=copy_ctx)
         return
 
     # --- Modo avanzado ---
@@ -676,33 +965,23 @@ def main():
     )
 
     with tabs[0]:
-        from estacion.ux.presentation import format_int_es
+        from estacion.ux.presentation import EMPTY_FINDINGS_MESSAGE, format_int_es
 
-        st.caption("¿Para qué sirve? Ver el resumen de hallazgos en lenguaje simple.")
-        st.subheader("Descubrimiento")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Filas", format_int_es(profile.n_rows))
-        c2.metric("Columnas", format_int_es(profile.n_cols))
-        c3.metric("Hallazgos", format_int_es(len(findings)))
-        fdr = artifacts.get("fdr_global") or {}
-        n_sig, n_tested = fdr.get("n_significant"), fdr.get("n_tested")
-        c4.metric(
-            "Hallazgos confiables",
-            (
-                f"{format_int_es(n_sig)}/{format_int_es(n_tested)}"
-                if n_sig is not None and n_tested is not None
-                else "—"
-            ),
-            help="Tras corregir por muchas pruebas (FDR).",
-        )
+        st.caption("Resumen de hallazgos en lenguaje simple, con números que ya calculó el motor.")
         if not findings:
-            st.info(
-                "No encontramos hallazgos automáticos. "
-                "Con pocas filas o datos muy parejos es normal."
-            )
+            st.info(EMPTY_FINDINGS_MESSAGE)
         else:
-            render_plain_summary(findings, profile, artifacts)
-            render_finding_cards(findings, narratives, show_empty=False)
+            render_summary_header(findings, profile, artifacts, df, ctx=copy_ctx)
+            fdr = artifacts.get("fdr_global") or {}
+            n_sig, n_tested = fdr.get("n_significant"), fdr.get("n_tested")
+            if n_sig is not None and n_tested is not None:
+                st.caption(
+                    f"Hallazgos confiables tras corregir por muchas pruebas: "
+                    f"{format_int_es(n_sig)} de {format_int_es(n_tested)}."
+                )
+            render_finding_cards(
+                findings, narratives, show_empty=False, ctx=copy_ctx, layout="summary"
+            )
 
     with tabs[1]:
         from estacion.ux.presentation import format_int_es, format_pct
@@ -713,7 +992,10 @@ def main():
             humanize_granularity_notes,
         )
 
-        st.caption("¿Para qué sirve? Ficha de cada columna y reglas de calidad editables.")
+        st.caption(
+            "La ficha de cada columna: qué tipo de dato es, cuántos vacíos tiene y si algo se ve raro. "
+            "Ej.: te avisa si 'order_id' tiene repetidos cuando debería ser único."
+        )
         st.subheader("Perfil del dataset")
         perfil_df = pd.DataFrame(
             [
@@ -1252,7 +1534,7 @@ def main():
 
     with tabs[8]:
         st.caption("¿Para qué sirve? Bajar el informe y guardar el análisis para más tarde.")
-        _render_informe(df, selected, store)
+        _render_informe(df, selected, store, ctx=copy_ctx)
         st.subheader("Comparar dos análisis guardados")
         sessions = store.list_sessions()
         if len(sessions) < 2:

@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.3 — UI Claro SaaS + copy (2026-11-13)
+
+- Rediseño visual Direction A (fondo `#F6F8FB`, índigo `#4F46E5`, Inter) + titular editorial tipo C en el resumen
+- Tarjetas con borde, badges, gráfico chico y detalle técnico sin listas Python (`[]`)
+- Métricas de negocio (ticket, hallazgos fuertes, problemas) y tipografía/espaciado nuevos
+- Copy con números del motor (peso del grupo, impacto de duplicados); unidad `$` vía diccionario o “unidades”
+- Bienvenida sin titular duplicado; demos en español; uploader maquillado a es-AR (CSS frágil)
+- Gráficos Plotly con paleta índigo/lila y separadores es-AR; PDF claro alineado
+- Tests nuevos de copy/formato (`tests/test_ux_redesign.py`)
+- Follow-up PR#2: override de unidad gana al diccionario; diccionario solo por stem exacto (no “venta” en el nombre)
+- Brecha Online ponderada por filas (~+19 % vs $311); “más de la mitad” ≥55 %; copy distinto por grupo
+- Informe MD/PDF con titular, unidades, conteo 11, decimales es-AR y sin jerga (Spearman/outliers/covariables)
+- KPI captions grises; badges lado a lado; Norte primero + línea de tamaño de cliente; top bar PDF/Subir otro; KPIs 2×2
+- Fix regresiones: Inter no pisa Material Symbols; topbar una sola vez; ejes/etiquetas de gráficos enteras; KPI grandes con caption adentro; copy del Norte / 49 filas / informe sin FDR ni nombres crudos
+- Fix acceso sidebar (header visible + botón expand); topbar antes de Vista previa; captions KPI en palabras claras
+
 ## v0.6.2 — UX v2 (2026-11-13)
 
 - Fix crítico: el ejemplo de ventas persiste entre reruns (ya no vuelve a la portada)

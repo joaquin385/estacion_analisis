@@ -53,10 +53,12 @@ def test_plain_summary_no_jargon(commercial_pack):
     blob = "\n".join(bullets).lower()
     for tok in SUMMARY_FORBIDDEN:
         assert tok.lower() not in blob, f"resumen contiene '{tok}': {bullets}"
-    # señales humanas esperadas en commercial
-    assert any("norte" in b.lower() or "customer_size" in b.lower() or "revenue" in b.lower() for b in bullets)
+    # señales humanas esperadas en commercial (nombres amigables, no crudos)
+    assert any("norte" in b.lower() or "tamaño" in b.lower() or "factur" in b.lower() for b in bullets)
     assert any("repetid" in b.lower() or "duplic" in b.lower() for b in bullets)
-    assert any("discount" in b.lower() for b in bullets)
+    assert any("descuento" in b.lower() or "falt" in b.lower() for b in bullets)
+    assert "customer_size" not in blob
+    assert "discount" not in blob
 
 
 def test_dedupe_duplicate_findings(commercial_pack):
@@ -138,7 +140,12 @@ def test_demo_select_persists_with_apptest():
     at = AppTest.from_file(str(ROOT / "app" / "streamlit_app.py"), default_timeout=120)
     at.run()
     # Botón de la portada
-    demo_btns = [b for b in at.button if "ejemplo de ventas" in (b.label or "").lower()]
+    demo_btns = [
+        b
+        for b in at.button
+        if (b.label or "").strip().lower() in {"ventas", "probar con un ejemplo de ventas"}
+        or "ejemplo de ventas" in (b.label or "").lower()
+    ]
     assert demo_btns, "no está el botón de ejemplo en la portada"
     demo_btns[0].click().run(timeout=120)
     # Debe haber análisis / no portada
@@ -214,7 +221,7 @@ def test_report_category_severity_and_bools_es(commercial_pack):
     _, findings, profile, artifacts = commercial_pack
     md = generate_markdown_report(profile, findings, artifacts)
     assert "relationship / critical" not in md
-    assert "Relación / Crítico" in md
+    assert "Relación / Crítico" not in md
     assert "Estadísticamente significativo:** True" not in md
     assert "Estadísticamente significativo:** Sí" in md
 

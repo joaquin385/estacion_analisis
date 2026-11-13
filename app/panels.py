@@ -1,4 +1,4 @@
-"""Paneles de UI reutilizables (lenguaje simple + avanzado)."""
+"""Paneles de UI reutilizables (lenguaje simple + avanzado) — Direction A."""
 
 from __future__ import annotations
 
@@ -9,18 +9,30 @@ import streamlit as st
 
 from estacion.core.types import Finding, FindingCategory
 from estacion.ux.presentation import (
+    EMPTY_FINDINGS_MESSAGE,
+    CopyContext,
+    build_business_kpis,
     build_plain_summary,
-    humanize_finding,
-    sort_findings_for_humans,
+    build_summary_headline,
+    category_pill_es,
     dedupe_findings,
+    discoveries_for_summary,
+    format_amount,
+    format_bullet_list,
     format_p_value,
     format_number,
     format_magnitude,
     format_n_rows,
     finding_track,
     dataframe_for_display,
+    friendly_column,
+    group_vs_rest_gap,
+    humanize_finding,
+    looks_like_money_column,
+    sort_findings_for_humans,
+    suggested_next_steps,
 )
-from estacion.viz.charts import group_means_bar
+from estacion.viz.charts import group_means_bar, relationship_means_line
 
 
 CATEGORY_ICON = {
@@ -37,7 +49,6 @@ CATEGORY_ICON = {
 DEMO_SELECT_KEY = "demo_dataset"
 WELCOME_UPLOAD_KEY = "welcome_uploaded_files"
 
-# Encabezados técnicos → español (modo avanzado / tablas)
 COLUMN_LABELS_ES = {
     "n_missing": "Nº vacíos",
     "missing_pct": "% vacíos",
@@ -98,7 +109,6 @@ def rename_columns_es(df: pd.DataFrame) -> pd.DataFrame:
         return df
     mapping = {c: COLUMN_LABELS_ES.get(str(c), COLUMN_LABELS_ES.get(str(c).lower(), str(c))) for c in df.columns}
     out = df.rename(columns=mapping)
-    # traducir valores de método si existe columna Método/method
     for col in list(out.columns):
         if str(col).lower() in {"método", "method"} or col == "Método":
             out[col] = out[col].map(lambda x: METHOD_LABELS_ES.get(str(x), x))
@@ -110,48 +120,70 @@ def render_welcome(
     *,
     demo_select_key: str = DEMO_SELECT_KEY,
 ) -> None:
-    st.markdown("### Subí tu planilla y te contamos qué hay adentro")
     st.markdown(
-        "Problemas de datos, patrones y oportunidades — con números calculados por código, "
-        "no inventados por una IA."
+        '<span class="ea-eyebrow">Análisis automático de planillas</span>',
+        unsafe_allow_html=True,
     )
-    c1, c2, c3 = st.columns(3)
-    c1.markdown("**1. Subí tu archivo**\n\nAcá abajo o desde la barra izquierda.")
-    c2.markdown("**2. Mirá el resumen**\n\nHallazgos en lenguaje simple.")
-    c3.markdown("**3. Descargá el informe**\n\nPDF o Markdown para compartir.")
-    st.markdown("---")
-    st.markdown("**Subí tu CSV o Excel**")
+    st.markdown(
+        '<h1 class="ea-hero-title">Subí tu planilla y en un minuto te decimos qué está pasando</h1>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p class="ea-lead">Encontramos qué grupos venden más, qué columnas se mueven juntas '
+        "y qué datos están rotos. Todo con números calculados, no inventados.</p>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="ea-dropzone">', unsafe_allow_html=True)
     st.file_uploader(
-        "Elegí un archivo de planilla",
+        "Arrastrá tu archivo acá o elegilo de tu compu",
         type=["csv", "xlsx", "xls"],
         accept_multiple_files=True,
         key=WELCOME_UPLOAD_KEY,
-        help="También acepta CSV de Excel en español (separador ; y decimal ,).",
-        label_visibility="collapsed",
+        help="CSV, XLSX · hasta 200 MB. También acepta CSV de Excel en español (separador ; y decimal ,).",
     )
-    st.caption("Formatos: CSV o Excel (.xlsx).")
+    st.caption("CSV o Excel (.xlsx) · hasta 200 MB · compatible con Excel en español")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    def _load_commercial_demo() -> None:
-        # on_click corre antes de instanciar widgets en el próximo run,
-        # así podemos setear la key del selectbox sin error.
-        st.session_state[demo_select_key] = "commercial"
-        st.session_state[on_demo_click_key] = "commercial"
+    def _load_demo(name: str):
+        def _cb() -> None:
+            st.session_state[demo_select_key] = name
+            st.session_state[on_demo_click_key] = name
 
-    col_demo, _ = st.columns([1, 1])
-    with col_demo:
-        st.button(
-            "Probar con un ejemplo de ventas",
-            type="primary",
-            on_click=_load_commercial_demo,
-        )
+        return _cb
+
+    st.markdown("**¿No tenés uno a mano?** Probá con un ejemplo:")
+    c1, c2, c3 = st.columns(3)
+    c1.button("Ventas", type="primary", on_click=_load_demo("commercial"), width="stretch")
+    c2.button("Finanzas", on_click=_load_demo("financial"), width="stretch")
+    c3.button("Operaciones", on_click=_load_demo("operational"), width="stretch")
+
+    st.markdown("")
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        with st.container(border=True):
+            st.markdown("**1. Subí tu archivo**")
+            st.caption("CSV o Excel. Si lo exportaste desde Excel en español, lo leemos igual.")
+    with s2:
+        with st.container(border=True):
+            st.markdown("**2. Leé los hallazgos**")
+            st.caption("Ordenados por importancia, con el número que los respalda.")
+    with s3:
+        with st.container(border=True):
+            st.markdown("**3. Llevate el informe**")
+            st.caption("PDF listo para mandar a tu equipo.")
+
     with st.expander("¿Cómo se ve un hallazgo?"):
         st.markdown(
             """
-            **Qué vimos:** la región Norte vende más que el resto (≈ 430 vs ≈ 280).
+            **El Norte vende 52 % más por pedido**
 
-            **Por qué importa:** puede guiar foco comercial o stock.
+            Un pedido promedio del Norte deja más que el resto. Además concentra buena parte
+            de la facturación.
 
-            **Detalle técnico** (opcional): prueba entre grupos, p &lt; 0,001…
+            **Por qué importa:** si es replicable, es la mejor pista para crecer.
+
+            **Qué podés hacer:** compará clientes y productos del Norte vs. el resto.
             """
         )
 
@@ -193,7 +225,6 @@ def render_load_preview(
         format_notes = [w for w in warnings if _is_parse_format_note(w)]
         other = [w for w in warnings if not _is_parse_format_note(w)]
         if format_notes:
-            # Un solo mensaje neutro (evitar dos yellow notes casi iguales).
             st.info(format_notes[0])
         for w in other:
             st.warning(w)
@@ -213,72 +244,238 @@ def render_load_preview(
         st.dataframe(dataframe_for_display(df.head(8)), width="stretch")
 
 
-def _render_one_card(f: Finding, narratives: dict[str, str]) -> None:
-    h = humanize_finding(f)
-    icon = CATEGORY_ICON.get(f.category, "•")
-    border = {
-        "red": "#BC4749",
-        "orange": "#E36414",
-        "teal": "#0F4C5C",
-        "blue": "#3D5A80",
-        "gray": "#6c757d",
-    }.get(h["color"], "#0F4C5C")
-    st.markdown(
-        f'<div class="finding-card" style="border-left-color:{border}">'
-        f"<strong>{icon} {h['title_simple']}</strong><br/>"
-        f'<span class="muted">{h["label"]}</span><br/>'
-        f"<b>Qué vimos:</b> {h['what']}<br/>"
-        f"<b>Por qué importa:</b> {h['why']}<br/>"
-        f"<b>Qué podés hacer:</b> {' · '.join(h['do'])}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-    with st.expander("Detalle técnico"):
-        st.write(narratives.get(f.id, ""))
-        if h["snippet"]:
-            st.caption(h["snippet"])
-        if f.p_value is not None:
-            from estacion.ux.presentation import format_p_clause
+def _badge_color(label: str) -> str:
+    if label in {"Muy confiable", "Confiable", "Muy relevante", "Relevante"}:
+        return "green"
+    if label in {"Revisar", "Atención"}:
+        return "orange"
+    if label in {"Para mirar"}:
+        return "blue"
+    return "gray"
 
-            clause = format_p_clause(f.p_value)
-            extra = (
-                f" · p corregido = {format_p_value(f.p_value_fdr)}"
-                if f.p_value_fdr is not None and not str(format_p_value(f.p_value_fdr)).startswith("<")
-                else (
-                    f" · p corregido {format_p_value(f.p_value_fdr)}"
-                    if f.p_value_fdr is not None
-                    else ""
-                )
+
+def _unit_prefix(ctx: CopyContext | None, var: str) -> str:
+    if ctx and ctx.money_unit in {"$", "USD", "ARS"} and looks_like_money_column(str(var)):
+        return "$"
+    return ""
+
+
+def _display_unit(ctx: CopyContext | None, var: str) -> str:
+    if looks_like_money_column(str(var)):
+        return (ctx.money_unit if ctx else "unidades") or "unidades"
+    return "unidades"
+
+
+def _render_technical_detail(
+    f: Finding,
+    narratives: dict[str, str],
+    h: dict[str, Any],
+    ctx: CopyContext | None = None,
+) -> None:
+    from estacion.ux.presentation import format_p_clause, method_plain_es, evidence_pairs_plain, plain_alts_and_followups
+
+    narrative = narratives.get(f.id, "")
+    if narrative:
+        st.write(narrative)
+    if h.get("snippet"):
+        st.caption(h["snippet"])
+    if f.p_value is not None:
+        clause = format_p_clause(f.p_value)
+        extra = (
+            f" · p corregido = {format_p_value(f.p_value_fdr)}"
+            if f.p_value_fdr is not None and not str(format_p_value(f.p_value_fdr)).startswith("<")
+            else (
+                f" · p corregido {format_p_value(f.p_value_fdr)}"
+                if f.p_value_fdr is not None
+                else ""
             )
-            st.write(clause + extra)
-        from estacion.ux.presentation import method_plain_es
-
-        st.write(f"**Método:** {method_plain_es(f.method)}")
+        )
+        st.write(clause + extra)
+    st.write(f"**Método:** {method_plain_es(f.method)}")
+    gap = group_vs_rest_gap(f)
+    if gap and gap.get("pct") is not None:
+        u = _display_unit(ctx, gap["var"])
+        st.write(
+            f"**Magnitud:** ~{abs(gap['pct']):.0f} % vs el resto "
+            f"({format_amount(gap['top_val'], u, digits=0)} vs {format_amount(gap['rest_avg'], u, digits=0)})"
+        )
+    else:
         st.write(f"**Magnitud:** {format_magnitude(f.magnitude, finding=f)}")
-        ev = f.evidence or {}
-        if isinstance(ev.get("group_means"), dict) and ev["group_means"]:
-            gm = {str(k): float(v) for k, v in ev["group_means"].items()}
+    ev = f.evidence or {}
+    if isinstance(ev.get("group_means"), dict) and ev["group_means"]:
+        gm = {str(k): float(v) for k, v in ev["group_means"].items()}
+        var = f.variables[0] if f.variables else "valor"
+        u = _display_unit(ctx, var)
+        st.dataframe(
+            pd.DataFrame(
+                [{"grupo": k, "media": format_amount(v, u, digits=0)} for k, v in gm.items()]
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+        try:
+            st.plotly_chart(
+                group_means_bar(
+                    gm,
+                    title="Promedio por grupo",
+                    y_title="Promedio",
+                    x_title="Grupo",
+                    highlight=gap["top_name"] if gap else None,
+                    value_prefix=_unit_prefix(ctx, var),
+                ),
+                width="stretch",
+            )
+        except Exception:
+            pass
+    else:
+        pairs = evidence_pairs_plain(ev)
+        if pairs:
             st.dataframe(
-                pd.DataFrame([{"grupo": k, "media": format_number(v)} for k, v in gm.items()]),
+                pd.DataFrame([{"campo": k, "valor": v} for k, v in pairs]),
                 width="stretch",
                 hide_index=True,
             )
-            try:
-                st.plotly_chart(group_means_bar(gm), width="stretch")
-            except Exception:
-                pass
-        else:
-            from estacion.ux.presentation import evidence_pairs_plain
 
-            pairs = evidence_pairs_plain(ev)
-            if pairs:
-                st.dataframe(
-                    pd.DataFrame([{"campo": k, "valor": v} for k, v in pairs]),
-                    width="stretch",
-                    hide_index=True,
+    from estacion.ux.presentation import plain_limitations
+
+    alts, _ = plain_alts_and_followups(f)
+    lims = plain_limitations(f)
+    if alts:
+        st.markdown("**Otras explicaciones posibles:**")
+        for a in alts:
+            st.markdown(f"- {a}")
+    if lims:
+        st.markdown("**Limitaciones:**")
+        for a in lims:
+            st.markdown(f"- {a}")
+
+
+def _binned_means_from_df(df: pd.DataFrame, x_col: str, y_col: str) -> dict[str, float] | None:
+    try:
+        g = df[[x_col, y_col]].dropna()
+        if g.empty or g[x_col].nunique() < 3:
+            return None
+        means = g.groupby(x_col, observed=True)[y_col].mean().sort_index()
+        return {str(k): float(v) for k, v in means.items()}
+    except Exception:
+        return None
+
+
+def _mini_chart_for_finding(f: Finding, ctx: CopyContext | None = None):
+    ev = f.evidence or {}
+    means = ev.get("group_means")
+    if isinstance(means, dict) and means:
+        gap = group_vs_rest_gap(f)
+        var = f.variables[0] if f.variables else "valor"
+        var_l = friendly_column(str(var), ctx)
+        return group_means_bar(
+            {str(k): float(v) for k, v in means.items()},
+            title=f"Promedio de {var_l} por grupo",
+            y_title="Promedio",
+            x_title="Grupo",
+            highlight=gap["top_name"] if gap else None,
+            value_prefix=_unit_prefix(ctx, var),
+            height=260,
+        )
+    # Relación: línea por niveles (maqueta A)
+    if f.category == FindingCategory.RELATIONSHIP and ctx and ctx.df is not None:
+        a = (ev.get("var_a") or (f.variables[0] if f.variables else None))
+        b = (ev.get("var_b") or (f.variables[1] if len(f.variables) > 1 else None))
+        if a and b and str(a) in ctx.df.columns and str(b) in ctx.df.columns:
+            binned = _binned_means_from_df(ctx.df, str(a), str(b))
+            if binned:
+                return relationship_means_line(
+                    binned,
+                    title=f"{friendly_column(str(b), ctx)} por {friendly_column(str(a), ctx)}",
+                    y_title="Promedio",
+                    x_title=friendly_column(str(a), ctx),
+                    value_prefix=_unit_prefix(ctx, str(b)),
+                    height=260,
                 )
-        st.write("**Otras explicaciones posibles:**", f.alternative_explanations)
-        st.write("**Limitaciones:**", f.limitations)
+    return None
+
+
+def _render_card_body(h: dict[str, Any]) -> None:
+    st.markdown(f"### {h['title_simple']}")
+    st.markdown('<p class="ea-lbl">Qué vimos</p>', unsafe_allow_html=True)
+    st.markdown(h["what"])
+    st.markdown('<p class="ea-lbl">Por qué importa</p>', unsafe_allow_html=True)
+    st.markdown(h["why"])
+    st.markdown('<p class="ea-lbl">Qué podés hacer</p>', unsafe_allow_html=True)
+    for a in h["do"]:
+        st.markdown(f"- {a}")
+
+
+def _render_one_card(
+    f: Finding,
+    narratives: dict[str, str],
+    *,
+    ctx: CopyContext | None = None,
+    show_chart: bool = True,
+) -> None:
+    h = humanize_finding(f, ctx)
+    with st.container(border=True):
+        # Badges lado a lado (no en columnas que empujan al medio)
+        try:
+            with st.container(horizontal=True, gap="small"):
+                st.badge(h.get("pill") or category_pill_es(f), color="violet")
+                st.badge(f"● {h['label']}", color=_badge_color(h["label"]))
+        except Exception:
+            st.markdown(
+                f'<span class="ea-pill">{h.get("pill") or ""}</span> '
+                f'<span class="ea-conf">● {h["label"]}</span>',
+                unsafe_allow_html=True,
+            )
+
+        chart = _mini_chart_for_finding(f, ctx) if show_chart else None
+        if chart is not None:
+            left, right = st.columns([1.35, 1])
+            with left:
+                _render_card_body(h)
+            with right:
+                st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
+        else:
+            _render_card_body(h)
+
+        with st.expander("Ver detalle técnico"):
+            _render_technical_detail(f, narratives, h, ctx=ctx)
+
+
+def render_problem_sidebar(
+    problems: list[Finding],
+    *,
+    ctx: CopyContext | None = None,
+    all_findings: list[Finding] | None = None,
+) -> None:
+    st.markdown('<p class="ea-sec">Antes de confiar en los totales</p>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown(f"**{len(problems)} problema{'s' if len(problems) != 1 else ''} en tus datos**")
+        if not problems:
+            st.caption("No hay alertas de calidad fuertes.")
+        for f in problems[:5]:
+            h = humanize_finding(f, ctx)
+            st.markdown(f"**!** {h['title_simple']}")
+            # No repetir el título: porqué (+ acción corta en anomalías / extremos)
+            why = (h.get("why") or "").strip().rstrip(".")
+            do0 = (h.get("do") or [""])[0].strip().rstrip(".")
+            if f.category == FindingCategory.ANOMALY and do0:
+                st.caption(f"{why}. {do0}.")
+            else:
+                st.caption(f"{why}.")
+        if problems:
+            with st.expander("Ver cómo arreglarlos"):
+                for f in problems:
+                    h = humanize_finding(f, ctx)
+                    st.markdown(f"**{h['title_simple']}**")
+                    st.caption(h["why"])
+                    for a in h["do"]:
+                        st.markdown(f"- {a}")
+
+    steps = suggested_next_steps(all_findings or problems, ctx)
+    with st.container(border=True):
+        st.markdown("**Próximos pasos sugeridos**")
+        for i, s in enumerate(steps, 1):
+            st.markdown(f"{i}. {s}")
 
 
 def render_finding_cards(
@@ -286,41 +483,84 @@ def render_finding_cards(
     narratives: dict[str, str],
     *,
     show_empty: bool = True,
+    ctx: CopyContext | None = None,
+    layout: str = "stacked",
 ) -> None:
-    findings = dedupe_findings(findings)
-    discoveries = [f for f in findings if finding_track(f) == "descubrimientos"]
-    problems = [f for f in findings if finding_track(f) == "problemas"]
+    problems = [f for f in dedupe_findings(findings) if finding_track(f) == "problemas"]
+    discoveries = discoveries_for_summary(findings)
 
     if not discoveries and not problems:
         if show_empty:
-            st.info(
-                "No encontramos hallazgos destacados. "
-                "Puede ser que los datos estén muy parejos, o que haya pocas filas "
-                "para detectar patrones. Probá Explorar o el modo avanzado."
-            )
+            st.info(EMPTY_FINDINGS_MESSAGE)
+        return
+
+    if layout == "summary":
+        main, side = st.columns([1.55, 0.9], gap="large")
+        with main:
+            st.markdown('<p class="ea-sec">Lo que encontramos</p>', unsafe_allow_html=True)
+            for f in discoveries[:3]:
+                _render_one_card(f, narratives, ctx=ctx, show_chart=True)
+            rest = discoveries[3:]
+            if rest:
+                with st.expander(f"Más descubrimientos ({len(rest)})"):
+                    for f in rest:
+                        _render_one_card(f, narratives, ctx=ctx, show_chart=False)
+        with side:
+            render_problem_sidebar(problems, ctx=ctx, all_findings=findings)
         return
 
     if discoveries:
         st.markdown("#### Lo más interesante")
         for f in discoveries[:3]:
-            _render_one_card(f, narratives)
+            _render_one_card(f, narratives, ctx=ctx)
         rest = discoveries[3:]
         if rest:
             with st.expander(f"Más descubrimientos ({len(rest)})"):
                 for f in rest:
-                    _render_one_card(f, narratives)
+                    _render_one_card(f, narratives, ctx=ctx, show_chart=False)
 
     if problems:
         with st.expander(f"Problemas en tus datos ({len(problems)})", expanded=not discoveries):
             for f in problems:
-                _render_one_card(f, narratives)
+                _render_one_card(f, narratives, ctx=ctx, show_chart=False)
 
 
-def render_plain_summary(findings, profile, artifacts) -> None:
-    bullets = build_plain_summary(findings, profile, artifacts)
+def render_summary_header(
+    findings: list[Finding],
+    profile,
+    artifacts: dict[str, Any],
+    df: pd.DataFrame | None = None,
+    *,
+    ctx: CopyContext | None = None,
+) -> None:
+    from estacion.ux.presentation import friendly_dataset_name
+
+    headline, sub = build_summary_headline(findings, profile, artifacts, ctx)
+    label = (ctx.dataset_label if ctx and ctx.dataset_label else None) or friendly_dataset_name(profile.name)
+    st.markdown(f'<p class="ea-sec">{label} · análisis listo</p>', unsafe_allow_html=True)
+    st.markdown(f'<h2 class="ea-headline">{headline}</h2>', unsafe_allow_html=True)
+    st.markdown(f'<p class="ea-subhead">{sub}</p>', unsafe_allow_html=True)
+    kpis = build_business_kpis(findings, profile, df, ctx)
+    # 2×2; delta dentro de la card (gris vía CSS, sin flecha)
+    r1 = st.columns(2)
+    r2 = st.columns(2)
+    for col, kpi in zip(list(r1) + list(r2), kpis):
+        with col:
+            st.metric(
+                kpi["label"],
+                kpi["value"],
+                delta=kpi.get("delta") or None,
+                delta_color="off",
+                delta_arrow="off",
+                border=True,
+            )
+
+
+def render_plain_summary(findings, profile, artifacts, ctx: CopyContext | None = None) -> None:
+    bullets = build_plain_summary(findings, profile, artifacts, ctx=ctx)
     st.markdown("#### Resumen en lenguaje simple")
     if not bullets and not findings:
-        return  # el vacío lo maneja un solo mensaje arriba
+        return
     if not bullets:
         return
     for b in bullets:
@@ -344,7 +584,7 @@ def render_segmentation_human(seg: dict[str, Any], df: pd.DataFrame | None = Non
     else:
         st.warning(seg.get("caveat"))
     if sil is not None:
-        st.metric("Calidad del agrupamiento", f"{float(sil):.2f}")
+        st.metric("Calidad del agrupamiento", f"{float(sil):.2f}", border=True)
     best = (seg.get("kmeans") or {}).get("best") or {}
     st.write(f"Propuesta de agrupamiento: **k={best.get('k')}**")
     if df is not None and seg.get("kmeans", {}).get("labels") is not None:
@@ -372,4 +612,6 @@ def render_segmentation_human(seg: dict[str, Any], df: pd.DataFrame | None = Non
     if grid:
         with st.expander("Ver métricas por k"):
             st.dataframe(rename_columns_es(pd.DataFrame(grid)), width="stretch")
-    st.caption(" · ".join(seg.get("limitations") or []))
+    lims = format_bullet_list(seg.get("limitations") or [])
+    if lims:
+        st.caption(" · ".join(lims))

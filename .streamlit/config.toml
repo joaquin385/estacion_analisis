@@ -1,12 +1,55 @@
 [theme]
-primaryColor = "#0F4C5C"
-backgroundColor = "#F7F4EF"
-secondaryBackgroundColor = "#E8EEEC"
-textColor = "#1B2428"
-font = "sans serif"
+base = "light"
+primaryColor = "#4F46E5"
+backgroundColor = "#F6F8FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0F172A"
+font = "Inter"
+headingFont = "Inter"
+baseRadius = "1.1rem"
+buttonRadius = "0.7rem"
+borderColor = "#E5E9F0"
+dataframeBorderColor = "#E5E9F0"
+showWidgetBorder = true
+linkColor = "#4F46E5"
+codeBackgroundColor = "#F1F5F9"
+chartCategoricalColors = [
+  "#4F46E5",
+  "#818CF8",
+  "#C7D2FE",
+  "#A5B4FC",
+  "#6366F1",
+  "#4338CA",
+]
+chartSequentialColors = ["#EEF2FF", "#C7D2FE", "#818CF8", "#4F46E5", "#312E81"]
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfAZ9hiA.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuI6fAZ9hiA.woff2"
+weight = 500
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuGKYAZ9hiA.woff2"
+weight = 600
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYAZ9hiA.woff2"
+weight = 700
+style = "normal"
 
 [client]
 toolbarMode = "minimal"
+showSidebarNavigation = false
 
 [browser]
 gatherUsageStats = false
