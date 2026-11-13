@@ -288,33 +288,59 @@ def resolve_money_unit(
 ) -> str:
     """
     Unidad para montos: override de UI > diccionario > 'unidades'.
+    Si override es explícito ('$' o 'unidades'), gana siempre.
     No inventa '$' si no viene del diccionario/override.
     """
-    if override and str(override).strip():
+    if override is not None and str(override).strip() and str(override).strip() != "Auto":
         return str(override).strip()
-    if column and dictionary_units:
-        u = dictionary_units.get(column) or dictionary_units.get(str(column).lower())
-        if u and str(u).strip():
-            return str(u).strip()
+    if dictionary_units:
+        if column:
+            u = dictionary_units.get(column) or dictionary_units.get(str(column).lower())
+            if u and str(u).strip():
+                return str(u).strip()
+        # Auto: primera unidad monetaria del diccionario
+        for u in dictionary_units.values():
+            if u and str(u).strip() in {"$", "USD", "ARS", "u$s", "U$S"}:
+                return str(u).strip()
     return "unidades"
 
 
+# Stems exactos que mapean a un diccionario (no substring "venta" en cualquier archivo)
+_DICT_STEM_ALIASES = {
+    "commercial": "commercial",
+    "ventas": "commercial",
+    "financial": "finance",
+    "finance": "finance",
+    "finanzas": "finance",
+    "retail": "retail",
+    "healthcare": "healthcare",
+    "manufacturing": "manufacturing",
+}
+
+
 def load_dictionary_units(path: str | Path | None = None, name_hint: str | None = None) -> dict[str, str]:
-    """Carga {columna: unit} desde un YAML/JSON de diccionario si existe."""
+    """Carga {columna: unit} solo con match exacto de stem (no por substring)."""
     candidates: list[Path] = []
     if path:
         candidates.append(Path(path))
     root = Path(__file__).resolve().parents[2]
     dict_dir = root / "config" / "dictionaries"
     if name_hint:
-        stem = Path(str(name_hint)).stem.lower()
-        for alias in {stem, stem.replace("-", "_"), "commercial" if "venta" in stem else stem}:
+        stem = Path(str(name_hint)).stem.lower().replace("-", "_")
+        alias = _DICT_STEM_ALIASES.get(stem)
+        if alias:
             candidates.append(dict_dir / f"{alias}_v1.yaml")
             candidates.append(dict_dir / f"{alias}_v1.json")
-        if stem in {"commercial", "ventas"}:
-            candidates.append(dict_dir / "commercial_v1.yaml")
+        # stem literal si existe archivo homónimo
+        candidates.append(dict_dir / f"{stem}_v1.yaml")
+        candidates.append(dict_dir / f"{stem}_v1.json")
     out: dict[str, str] = {}
+    seen: set[str] = set()
     for p in candidates:
+        key = str(p.resolve()) if p.exists() else str(p)
+        if key in seen:
+            continue
+        seen.add(key)
         if not p.exists():
             continue
         try:
@@ -332,7 +358,7 @@ def load_dictionary_units(path: str | Path | None = None, name_hint: str | None 
 
 
 def format_amount(value: Any, unit: str = "unidades", *, digits: int | None = None) -> str:
-    """Formatea un monto con unidad: '$430' o '430 unidades'."""
+    """Formatea un monto con unidad: '$430' o '430 unidades'. Sin decimales si digits=0."""
     if value is None:
         return "—"
     try:
@@ -341,12 +367,13 @@ def format_amount(value: Any, unit: str = "unidades", *, digits: int | None = No
         return str(value)
     if digits is None:
         digits = 0 if abs(v) >= 20 else 2
-    num = format_number(v, digits=digits)
+    if digits <= 0:
+        num = format_int_es(int(round(v)))
+    else:
+        num = format_number(v, digits=digits)
     u = (unit or "unidades").strip()
     if u in {"$", "USD", "ARS", "u$s", "U$S"}:
-        # Símbolo delante, sin espacio (maqueta A)
-        sym = "$" if u in {"$", "USD", "ARS", "u$s", "U$S"} else u
-        return f"{sym}{num}"
+        return f"${num}"
     if u.lower() in {"unidades", "unidad", "units"}:
         return f"{num} unidades"
     return f"{num} {u}"
@@ -445,8 +472,9 @@ def dataframe_for_display(
 
 def group_vs_rest_gap(f: Finding) -> dict[str, Any] | None:
     """
-    Definición única de brecha entre grupos: extremo vs promedio del resto.
-    (No usar relative_mean_gap del motor: ese compara max−min / media global.)
+    Brecha extremo vs resto: promedio ponderado por tamaño de grupo cuando hay
+    group_sizes (promedio real de las filas del resto). Si no hay tamaños,
+    cae al promedio simple de medias de grupo.
     """
     ev = f.evidence or {}
     means = ev.get("group_means")
@@ -455,8 +483,18 @@ def group_vs_rest_gap(f: Finding) -> dict[str, Any] | None:
     items = [(str(k), float(v)) for k, v in means.items()]
     items.sort(key=lambda kv: kv[1], reverse=True)
     top_name, top_val = items[0]
-    rest = [v for _, v in items[1:]]
-    rest_avg = sum(rest) / len(rest)
+    sizes = ev.get("group_sizes")
+    rest_items = items[1:]
+    if isinstance(sizes, dict) and all(str(k) in sizes for k, _ in rest_items):
+        w_sum = 0.0
+        n_sum = 0.0
+        for k, v in rest_items:
+            n = float(sizes[str(k)])
+            w_sum += v * n
+            n_sum += n
+        rest_avg = w_sum / n_sum if n_sum else 0.0
+    else:
+        rest_avg = sum(v for _, v in rest_items) / len(rest_items)
     pct = None if rest_avg == 0 else 100.0 * (top_val - rest_avg) / abs(rest_avg)
     var = f.variables[0] if f.variables else "valor"
     return {
@@ -759,6 +797,49 @@ def _approx_num(v: float) -> str:
     return format_number(v)
 
 
+def _pretty_group(name: str) -> str:
+    """Nombre de grupo sin comillas; capitaliza la primera letra."""
+    s = str(name or "").strip()
+    if not s:
+        return s
+    return s[:1].upper() + s[1:]
+
+
+_GROUP_PLURAL_ES = {
+    "channel": "canales",
+    "canal": "canales",
+    "region": "regiones",
+    "región": "regiones",
+}
+
+
+def _group_plural(group_var: str, group_label: str) -> str:
+    key = str(group_var or "").lower()
+    if key in _GROUP_PLURAL_ES:
+        return _GROUP_PLURAL_ES[key]
+    # etiqueta amigable conocida
+    low = str(group_label or "").lower()
+    if low in _GROUP_PLURAL_ES:
+        return _GROUP_PLURAL_ES[low]
+    return f"niveles de {group_label}"
+
+
+def _share_phrase(share: float, noun: str) -> str | None:
+    """Frase de participación; 'más de la mitad' si ≥55 %."""
+    # noun: "los pedidos" | "la facturación"
+    if share >= 0.55:
+        return f"más de la mitad de {noun}"
+    if abs(share - 0.5) < 0.05:
+        return f"la mitad de {noun}"
+    if abs(share - 0.4) < 0.06 and "pedido" in noun:
+        return "4 de cada 10 pedidos"
+    if abs(share - 1 / 3) < 0.05 and "pedido" in noun:
+        return "1 de cada 3 pedidos"
+    if 0.15 <= share <= 0.85:
+        return f"el {format_pct(share)} de {noun}"
+    return None
+
+
 def _group_share_phrases(f: Finding, top_name: str) -> list[str]:
     """Peso del grupo (filas / facturación) con números ya en evidence."""
     ev = f.evidence or {}
@@ -768,24 +849,18 @@ def _group_share_phrases(f: Finding, top_name: str) -> list[str]:
     total = sum(int(v) for v in sizes.values()) or 1
     row_share = int(sizes[top_name]) / total
     bits: list[str] = []
-    if abs(row_share - 0.4) < 0.06:
-        bits.append("4 de cada 10 pedidos")
-    elif abs(row_share - 0.5) < 0.06:
-        bits.append("la mitad de los pedidos")
-    elif abs(row_share - 1 / 3) < 0.05:
-        bits.append("1 de cada 3 pedidos")
-    elif 0.15 <= row_share <= 0.85:
-        bits.append(f"el {format_pct(row_share)} de las filas")
+    row_bit = _share_phrase(row_share, "los pedidos")
+    if row_bit:
+        bits.append(row_bit)
     means = ev.get("group_means")
     value_col = f.variables[0] if f.variables else None
     if isinstance(means, dict) and value_col and looks_like_money_column(value_col):
         weighted = {k: float(means.get(k, 0)) * float(sizes.get(k, 0)) for k in sizes}
         tot_w = sum(weighted.values()) or 1.0
         rev_share = weighted.get(top_name, 0) / tot_w
-        if abs(rev_share - 0.5) < 0.07:
-            bits.append("la mitad de la facturación")
-        elif rev_share >= 0.2:
-            bits.append(f"el {format_pct(rev_share)} de la facturación")
+        rev_bit = _share_phrase(rev_share, "la facturación")
+        if rev_bit:
+            bits.append(rev_bit)
     return bits
 
 
@@ -794,21 +869,22 @@ def _group_vs_rest_phrase(f: Finding, ctx: CopyContext | None = None) -> str | N
     gap = group_vs_rest_gap(f)
     if not gap:
         return None
-    top_name, top_val, rest_avg, pct, var = (
-        gap["top_name"],
+    top_name = _pretty_group(gap["top_name"])
+    top_val, rest_avg, pct, var = (
         gap["top_val"],
         gap["rest_avg"],
         gap["pct"],
         gap["var"],
     )
+    var_l = friendly_column(str(var), ctx)
     if pct is None:
         return (
-            f"'{top_name}' tiene un promedio de '{var}' de ≈{_approx_num(top_val)} "
+            f"{top_name} tiene un promedio de {var_l} de ≈{_approx_num(top_val)} "
             f"(resto ≈{_approx_num(rest_avg)})"
         )
     direction = "más alto" if pct >= 0 else "más bajo"
     return (
-        f"'{top_name}' tiene un promedio de '{var}' ~{abs(pct):.0f} % {direction} "
+        f"{top_name} tiene un promedio de {var_l} ~{abs(pct):.0f} % {direction} "
         f"que el resto (≈{_approx_num(top_val)} vs ≈{_approx_num(rest_avg)})"
     )
 
@@ -1002,22 +1078,36 @@ def _human_what(f: Finding, ctx: CopyContext | None = None) -> str:
             u = unit if looks_like_money_column(var) else "unidades"
             top = format_amount(gap["top_val"], u, digits=0)
             rest = format_amount(gap["rest_avg"], u, digits=0)
-            others = []
+            raw_name = str(gap["top_name"])
+            name = _pretty_group(raw_name)
             means = (f.evidence or {}).get("group_means") or {}
-            if isinstance(means, dict):
-                others = [str(k) for k in means if str(k) != gap["top_name"]]
-            others_txt = ", ".join(others) if others else "el resto"
-            body = (
-                f"Un promedio de '{gap['top_name']}' deja {top}; "
-                f"en {others_txt} ronda {rest}."
+            others = (
+                [_pretty_group(k) for k in means if str(k) != raw_name]
+                if isinstance(means, dict)
+                else []
             )
-            shares = _group_share_phrases(f, gap["top_name"])
+            others_txt = ", ".join(others) if others else "el resto"
+            if looks_like_money_column(var):
+                body = (
+                    f"Un pedido promedio de {name} deja {top}; "
+                    f"en {others_txt} ronda {rest}."
+                )
+            else:
+                body = (
+                    f"El promedio de {friendly_column(var, ctx)} en {name} es {top}; "
+                    f"en {others_txt} ronda {rest}."
+                )
+            shares = _group_share_phrases(f, raw_name)
             if shares:
-                body += " Además, " + " y ".join(shares) + "."
+                # verbo explícito para no quedar "Además, 4 de cada 10 pedidos y…"
+                if len(shares) == 1:
+                    body += f" Además, concentra {shares[0]}."
+                else:
+                    body += f" Además, concentra {shares[0]} y {shares[1]}."
             return body
         phrase = _group_vs_rest_phrase(f, ctx)
         if phrase:
-            return phrase + "."
+            return phrase + ("." if not phrase.endswith(".") else "")
 
     if f.category == FindingCategory.ANOMALY:
         n = ev.get("n_anomalies")
@@ -1114,23 +1204,43 @@ def _human_why(f: Finding, ctx: CopyContext | None = None) -> str:
             return "Todavía no hay respaldo suficiente; tomalo como pista, no como hecho."
         a = ev.get("var_a") or (f.variables[0] if f.variables else "X")
         b = ev.get("var_b") or (f.variables[1] if len(f.variables) > 1 else "Y")
+        if str(a) == "customer_size" and looks_like_money_column(str(b)):
+            return (
+                "Te marca dónde está el ticket alto: a mayor tamaño de cliente, "
+                "más facturación por pedido. Ojo: no prueba que agrandar al cliente "
+                "haga subir la venta; puede haber otra causa detrás."
+            )
         return (
-            f"Te dice dónde está el ticket alto entre {friendly_column(str(a), ctx)} y "
-            f"{friendly_column(str(b), ctx)}. Ojo: no prueba que una cause la otra; "
-            "puede haber otra causa detrás."
+            f"Cuando {friendly_column(str(a), ctx)} y {friendly_column(str(b), ctx)} "
+            "se mueven juntos, podés priorizar ese vínculo. "
+            "Ojo: no prueba que una cause la otra."
         )
     if f.category == FindingCategory.STATISTICAL:
         gap = group_vs_rest_gap(f)
         group = f.variables[1] if len(f.variables) >= 2 else (f.variables[0] if f.variables else "algunos grupos")
+        group_l = friendly_column(str(group), ctx)
+        plural = _group_plural(str(group), group_l)
         if gap:
+            name = _pretty_group(gap["top_name"])
+            # Textos distintos por tipo de agrupación (no reutilizar plantilla del Norte)
+            if str(group).lower() in {"channel", "canal"}:
+                return (
+                    f"Si el margen en {name} es similar al resto, empujar ese canal "
+                    "sube la facturación sin conseguir clientes nuevos. "
+                    f"Ojo: la diferencia entre {plural} no prueba causa por sí sola."
+                )
+            if str(group).lower() in {"region", "región"}:
+                return (
+                    f"Si {name} rinde así por razones replicables (mix, precio, equipo), "
+                    "es la mejor pista para crecer en las otras regiones. "
+                    f"Ojo: la diferencia entre {plural} no prueba causa por sí sola."
+                )
             return (
-                f"Si '{gap['top_name']}' rinde así por razones replicables "
-                f"(mix, precio, equipo), es la mejor pista para crecer en el resto. "
-                f"Ojo: la diferencia entre niveles de {friendly_column(str(group), ctx)} "
-                "no prueba causa por sí sola."
+                f"Si {name} se destaca por razones replicables, conviene mirar qué lo hace distinto. "
+                f"Ojo: la diferencia entre {plural} no prueba causa por sí sola."
             )
         return (
-            f"La diferencia entre niveles de {friendly_column(str(group), ctx)} "
+            f"La diferencia entre {plural} "
             "puede guiar foco comercial, stock o precios."
         )
     if f.category == FindingCategory.DISTRIBUTION:
@@ -1164,16 +1274,30 @@ def _human_actions(f: Finding, ctx: CopyContext | None = None) -> list[str]:
         gap = group_vs_rest_gap(f)
         group = f.variables[1] if len(f.variables) >= 2 else "grupo"
         if gap:
+            name = _pretty_group(gap["top_name"])
+            if str(group).lower() in {"channel", "canal"}:
+                return [
+                    f"Revisá si la diferencia de {name} se mantiene descontando envíos o descuentos.",
+                    "Compará el mix de productos entre canales antes de empujar presupuesto.",
+                ]
+            if str(group).lower() in {"region", "región"}:
+                return [
+                    f"Compará qué clientes y productos compran en {name} vs. el resto.",
+                    "Antes de mover presupuesto, chequeá que no sea un par de clientes grandes.",
+                ]
             return [
-                f"Compará qué clientes y productos aparecen en '{gap['top_name']}' vs. el resto.",
-                "Antes de mover presupuesto, chequeá que no sea un par de clientes grandes.",
+                f"Compará el perfil de {name} contra el resto.",
+                "Revisá si la diferencia importa en plata o unidades reales.",
             ]
         return [
             f"Compará los niveles de {friendly_column(str(group), ctx)} entre sí.",
             "Revisá si la diferencia importa en plata o unidades reales.",
         ]
     if f.category == FindingCategory.ANOMALY:
-        return ["Revisá esas filas a mano.", "Contrastalas con reglas de negocio antes de borrarlas."]
+        return [
+            "Revisá esas filas a mano y anotá si son errores o casos especiales.",
+            "Contrastalas con reglas de negocio antes de borrarlas o ajustar totales.",
+        ]
     if f.category == FindingCategory.QUALITY:
         if "duplic" in (f.title or "").lower() or "duplicate_pct" in ev or ev.get("rule") == "max_duplicate_pct":
             return [
@@ -1318,16 +1442,17 @@ def _simplify_title(f: Finding, ctx: CopyContext | None = None) -> str:
         gap = group_vs_rest_gap(f)
         if gap and gap.get("pct") is not None:
             var = gap["var"]
-            noun = "por pedido" if looks_like_money_column(var) else f"en {friendly_column(var, ctx)}"
+            name = str(gap["top_name"])
             direction = "más" if gap["pct"] >= 0 else "menos"
+            if looks_like_money_column(var):
+                pct_i = abs(gap["pct"])
+                if name.lower() in {"norte", "sur", "este", "oeste"}:
+                    return f"El {name} vende {pct_i:.0f} % {direction} por pedido que el resto"
+                label = name[:1].upper() + name[1:] if name else name
+                return f"{label} deja {pct_i:.0f} % {direction} por pedido que el resto"
             return (
-                f"El {gap['top_name']} vende {abs(gap['pct']):.0f} % {direction} "
-                f"{noun} que el resto"
-                if looks_like_money_column(var)
-                else (
-                    f"'{gap['top_name']}' está {abs(gap['pct']):.0f} % "
-                    f"{'más alto' if gap['pct'] >= 0 else 'más bajo'} que el resto"
-                )
+                f"{name} está {abs(gap['pct']):.0f} % "
+                f"{'más alto' if gap['pct'] >= 0 else 'más bajo'} que el resto"
             )
 
     if f.category == FindingCategory.RELATIONSHIP:
@@ -1626,6 +1751,60 @@ def sort_findings_for_humans(findings: list[Finding]) -> list[Finding]:
         return (track, sev_rank, prac, -f.score)
 
     return sorted(findings, key=key)
+
+
+def discoveries_for_summary(findings: list[Finding]) -> list[Finding]:
+    """Descubrimientos con el hallazgo del titular (grupos / facturación) primero."""
+    disc = [f for f in dedupe_findings(findings) if finding_track(f) == "descubrimientos"]
+    best = None
+    best_score = -1.0
+    for f in disc:
+        if f.category != FindingCategory.STATISTICAL:
+            continue
+        gap = group_vs_rest_gap(f)
+        if not gap:
+            continue
+        shares = _group_share_phrases(f, gap["top_name"])
+        # Preferir el que explica facturación / tiene mayor |pct|
+        score = abs(float(gap.get("pct") or 0))
+        if any("facturación" in s for s in shares):
+            score += 100
+        if score > best_score:
+            best_score = score
+            best = f
+    if best is None:
+        return disc
+    return [best] + [f for f in disc if f.id != best.id]
+
+
+def _plain_limitation_text(text: str) -> str:
+    """Limpia jerga típica del motor en limitaciones / alternativas."""
+    t = _strip_jargon(str(text or ""))
+    t = re.sub(r"outliers?\s*o\s*ties", "valores extremos o empates", t, flags=re.I)
+    t = re.sub(r"\boutliers?\b", "valores extremos", t, flags=re.I)
+    t = re.sub(r"\bties\b", "empates", t, flags=re.I)
+    t = re.sub(r"correlación espuria", "correlación engañosa", t, flags=re.I)
+    t = re.sub(r"\bcovariables?\b", "otras variables", t, flags=re.I)
+    t = re.sub(r"\bresiduales\b", "restos del ajuste", t, flags=re.I)
+    t = re.sub(r"\bcontamination\b", "umbral de rareza", t, flags=re.I)
+    return t
+
+
+def plain_alts_and_followups(f: Finding) -> tuple[list[str], list[str]]:
+    """Alternativas y follow-ups sin jerga para informes."""
+    cleaned_alts = [_plain_limitation_text(a) for a in format_bullet_list(f.alternative_explanations)]
+    follows = [_plain_limitation_text(a) for a in format_bullet_list(f.follow_up)]
+    return cleaned_alts, follows
+
+
+def plain_limitations(f: Finding) -> list[str]:
+    """Limitaciones del hallazgo sin jerga."""
+    return [_plain_limitation_text(a) for a in format_bullet_list(f.limitations)]
+
+
+def counted_findings_n(findings: list[Finding]) -> int:
+    """Cantidad coherente con la UI (tras dedupe)."""
+    return len(dedupe_findings(findings))
 
 
 def build_plain_summary(

@@ -16,6 +16,8 @@ from estacion.ux.presentation import (
     build_summary_headline,
     category_pill_es,
     dedupe_findings,
+    discoveries_for_summary,
+    format_amount,
     format_bullet_list,
     format_p_value,
     format_number,
@@ -23,12 +25,14 @@ from estacion.ux.presentation import (
     format_n_rows,
     finding_track,
     dataframe_for_display,
+    friendly_column,
     group_vs_rest_gap,
     humanize_finding,
+    looks_like_money_column,
     sort_findings_for_humans,
     suggested_next_steps,
 )
-from estacion.viz.charts import group_means_bar
+from estacion.viz.charts import group_means_bar, relationship_means_line
 
 
 CATEGORY_ICON = {
@@ -250,8 +254,25 @@ def _badge_color(label: str) -> str:
     return "gray"
 
 
-def _render_technical_detail(f: Finding, narratives: dict[str, str], h: dict[str, Any]) -> None:
-    from estacion.ux.presentation import format_p_clause, method_plain_es, evidence_pairs_plain
+def _unit_prefix(ctx: CopyContext | None, var: str) -> str:
+    if ctx and ctx.money_unit in {"$", "USD", "ARS"} and looks_like_money_column(str(var)):
+        return "$"
+    return ""
+
+
+def _display_unit(ctx: CopyContext | None, var: str) -> str:
+    if looks_like_money_column(str(var)):
+        return (ctx.money_unit if ctx else "unidades") or "unidades"
+    return "unidades"
+
+
+def _render_technical_detail(
+    f: Finding,
+    narratives: dict[str, str],
+    h: dict[str, Any],
+    ctx: CopyContext | None = None,
+) -> None:
+    from estacion.ux.presentation import format_p_clause, method_plain_es, evidence_pairs_plain, plain_alts_and_followups
 
     narrative = narratives.get(f.id, "")
     if narrative:
@@ -271,17 +292,28 @@ def _render_technical_detail(f: Finding, narratives: dict[str, str], h: dict[str
         )
         st.write(clause + extra)
     st.write(f"**Método:** {method_plain_es(f.method)}")
-    st.write(f"**Magnitud:** {format_magnitude(f.magnitude, finding=f)}")
+    gap = group_vs_rest_gap(f)
+    if gap and gap.get("pct") is not None:
+        u = _display_unit(ctx, gap["var"])
+        st.write(
+            f"**Magnitud:** ~{abs(gap['pct']):.0f} % vs el resto "
+            f"({format_amount(gap['top_val'], u, digits=0)} vs {format_amount(gap['rest_avg'], u, digits=0)})"
+        )
+    else:
+        st.write(f"**Magnitud:** {format_magnitude(f.magnitude, finding=f)}")
     ev = f.evidence or {}
     if isinstance(ev.get("group_means"), dict) and ev["group_means"]:
         gm = {str(k): float(v) for k, v in ev["group_means"].items()}
+        var = f.variables[0] if f.variables else "valor"
+        u = _display_unit(ctx, var)
         st.dataframe(
-            pd.DataFrame([{"grupo": k, "media": format_number(v)} for k, v in gm.items()]),
+            pd.DataFrame(
+                [{"grupo": k, "media": format_amount(v, u, digits=0)} for k, v in gm.items()]
+            ),
             width="stretch",
             hide_index=True,
         )
         try:
-            gap = group_vs_rest_gap(f)
             st.plotly_chart(
                 group_means_bar(
                     gm,
@@ -289,6 +321,7 @@ def _render_technical_detail(f: Finding, narratives: dict[str, str], h: dict[str
                     y_title="Promedio",
                     x_title="Grupo",
                     highlight=gap["top_name"] if gap else None,
+                    value_prefix=_unit_prefix(ctx, var),
                 ),
                 width="stretch",
             )
@@ -303,8 +336,10 @@ def _render_technical_detail(f: Finding, narratives: dict[str, str], h: dict[str
                 hide_index=True,
             )
 
-    alts = format_bullet_list(f.alternative_explanations)
-    lims = format_bullet_list(f.limitations)
+    from estacion.ux.presentation import plain_limitations
+
+    alts, _ = plain_alts_and_followups(f)
+    lims = plain_limitations(f)
     if alts:
         st.markdown("**Otras explicaciones posibles:**")
         for a in alts:
@@ -315,28 +350,60 @@ def _render_technical_detail(f: Finding, narratives: dict[str, str], h: dict[str
             st.markdown(f"- {a}")
 
 
-def _mini_chart_for_finding(f: Finding, ctx: CopyContext | None = None):
-    from estacion.ux.presentation import friendly_column, looks_like_money_column
+def _binned_means_from_df(df: pd.DataFrame, x_col: str, y_col: str) -> dict[str, float] | None:
+    try:
+        g = df[[x_col, y_col]].dropna()
+        if g.empty or g[x_col].nunique() < 3:
+            return None
+        means = g.groupby(x_col, observed=True)[y_col].mean().sort_index()
+        return {str(k): float(v) for k, v in means.items()}
+    except Exception:
+        return None
 
+
+def _mini_chart_for_finding(f: Finding, ctx: CopyContext | None = None):
     ev = f.evidence or {}
     means = ev.get("group_means")
     if isinstance(means, dict) and means:
         gap = group_vs_rest_gap(f)
         var = f.variables[0] if f.variables else "valor"
         var_l = friendly_column(str(var), ctx)
-        prefix = ""
-        if ctx and ctx.money_unit in {"$", "USD", "ARS"} and looks_like_money_column(str(var)):
-            prefix = "$"
         return group_means_bar(
             {str(k): float(v) for k, v in means.items()},
             title=f"Promedio de {var_l} por grupo",
             y_title="Promedio",
             x_title="Grupo",
             highlight=gap["top_name"] if gap else None,
-            value_prefix=prefix,
+            value_prefix=_unit_prefix(ctx, var),
             height=210,
         )
+    # Relación: línea por niveles (maqueta A)
+    if f.category == FindingCategory.RELATIONSHIP and ctx and ctx.df is not None:
+        a = (ev.get("var_a") or (f.variables[0] if f.variables else None))
+        b = (ev.get("var_b") or (f.variables[1] if len(f.variables) > 1 else None))
+        if a and b and str(a) in ctx.df.columns and str(b) in ctx.df.columns:
+            binned = _binned_means_from_df(ctx.df, str(a), str(b))
+            if binned:
+                return relationship_means_line(
+                    binned,
+                    title=f"{friendly_column(str(b), ctx)} por {friendly_column(str(a), ctx)}",
+                    y_title="Promedio",
+                    x_title=friendly_column(str(a), ctx),
+                    value_prefix=_unit_prefix(ctx, str(b)),
+                    height=210,
+                )
     return None
+
+
+def _render_card_body(h: dict[str, Any]) -> None:
+    st.markdown(f"### {h['title_simple']}")
+    st.markdown('<p class="ea-lbl">Qué vimos</p>', unsafe_allow_html=True)
+    st.markdown(h["what"])
+    st.markdown('<p class="ea-lbl">Por qué importa</p>', unsafe_allow_html=True)
+    st.markdown(h["why"])
+    st.markdown('<p class="ea-lbl">Qué podés hacer</p>', unsafe_allow_html=True)
+    for a in h["do"]:
+        st.markdown(f"- {a}")
 
 
 def _render_one_card(
@@ -348,44 +415,30 @@ def _render_one_card(
 ) -> None:
     h = humanize_finding(f, ctx)
     with st.container(border=True):
-        meta_cols = st.columns([1, 1.2])
-        with meta_cols[0]:
-            try:
+        # Badges lado a lado (no en columnas que empujan al medio)
+        try:
+            with st.container(horizontal=True, gap="small"):
                 st.badge(h.get("pill") or category_pill_es(f), color="violet")
-            except Exception:
-                st.caption(h.get("pill") or "")
-        with meta_cols[1]:
-            try:
                 st.badge(f"● {h['label']}", color=_badge_color(h["label"]))
-            except Exception:
-                st.caption(h["label"])
+        except Exception:
+            st.markdown(
+                f'<span class="ea-pill">{h.get("pill") or ""}</span> '
+                f'<span class="ea-conf">● {h["label"]}</span>',
+                unsafe_allow_html=True,
+            )
 
         chart = _mini_chart_for_finding(f, ctx) if show_chart else None
         if chart is not None:
             left, right = st.columns([1.35, 1])
             with left:
-                st.markdown(f"### {h['title_simple']}")
-                st.markdown(f'<p class="ea-lbl">Qué vimos</p>', unsafe_allow_html=True)
-                st.markdown(h["what"])
-                st.markdown(f'<p class="ea-lbl">Por qué importa</p>', unsafe_allow_html=True)
-                st.markdown(h["why"])
-                st.markdown(f'<p class="ea-lbl">Qué podés hacer</p>', unsafe_allow_html=True)
-                for a in h["do"]:
-                    st.markdown(f"- {a}")
+                _render_card_body(h)
             with right:
                 st.plotly_chart(chart, width="stretch", config={"displayModeBar": False})
         else:
-            st.markdown(f"### {h['title_simple']}")
-            st.markdown(f'<p class="ea-lbl">Qué vimos</p>', unsafe_allow_html=True)
-            st.markdown(h["what"])
-            st.markdown(f'<p class="ea-lbl">Por qué importa</p>', unsafe_allow_html=True)
-            st.markdown(h["why"])
-            st.markdown(f'<p class="ea-lbl">Qué podés hacer</p>', unsafe_allow_html=True)
-            for a in h["do"]:
-                st.markdown(f"- {a}")
+            _render_card_body(h)
 
         with st.expander("Ver detalle técnico"):
-            _render_technical_detail(f, narratives, h)
+            _render_technical_detail(f, narratives, h, ctx=ctx)
 
 
 def render_problem_sidebar(
@@ -402,12 +455,19 @@ def render_problem_sidebar(
         for f in problems[:5]:
             h = humanize_finding(f, ctx)
             st.markdown(f"**!** {h['title_simple']}")
-            st.caption(h["what"][:180] + ("…" if len(h["what"]) > 180 else ""))
+            # No repetir el título: porqué (+ acción corta en anomalías / extremos)
+            why = (h.get("why") or "").strip().rstrip(".")
+            do0 = (h.get("do") or [""])[0].strip().rstrip(".")
+            if f.category == FindingCategory.ANOMALY and do0:
+                st.caption(f"{why}. {do0}.")
+            else:
+                st.caption(f"{why}.")
         if problems:
             with st.expander("Ver cómo arreglarlos"):
                 for f in problems:
                     h = humanize_finding(f, ctx)
                     st.markdown(f"**{h['title_simple']}**")
+                    st.caption(h["why"])
                     for a in h["do"]:
                         st.markdown(f"- {a}")
 
@@ -426,9 +486,8 @@ def render_finding_cards(
     ctx: CopyContext | None = None,
     layout: str = "stacked",
 ) -> None:
-    findings = dedupe_findings(findings)
-    discoveries = [f for f in findings if finding_track(f) == "descubrimientos"]
-    problems = [f for f in findings if finding_track(f) == "problemas"]
+    problems = [f for f in dedupe_findings(findings) if finding_track(f) == "problemas"]
+    discoveries = discoveries_for_summary(findings)
 
     if not discoveries and not problems:
         if show_empty:
@@ -482,17 +541,14 @@ def render_summary_header(
     st.markdown(f'<h2 class="ea-headline">{headline}</h2>', unsafe_allow_html=True)
     st.markdown(f'<p class="ea-subhead">{sub}</p>', unsafe_allow_html=True)
     kpis = build_business_kpis(findings, profile, df, ctx)
-    cols = st.columns(4)
-    for col, kpi in zip(cols, kpis):
+    # 2×2: en móvil no queda 1 por fila; en desktop también queda compacto
+    r1 = st.columns(2)
+    r2 = st.columns(2)
+    for col, kpi in zip(list(r1) + list(r2), kpis):
         with col:
-            # delta_arrow off: el subtítulo no es una variación (+/-)
-            st.metric(
-                kpi["label"],
-                kpi["value"],
-                delta=kpi["delta"] or None,
-                delta_arrow="off",
-                border=True,
-            )
+            st.metric(kpi["label"], kpi["value"], border=True)
+            if kpi.get("delta"):
+                st.markdown(f'<p class="ea-kpi-cap">{kpi["delta"]}</p>', unsafe_allow_html=True)
 
 
 def render_plain_summary(findings, profile, artifacts, ctx: CopyContext | None = None) -> None:

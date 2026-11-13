@@ -111,20 +111,27 @@ st.set_page_config(
 CUSTOM_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-html, body, [class*="css"], .stApp, button, input, textarea {
+html, body, .stApp, .stApp *,
+[data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] *,
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
+button, input, textarea, label, p, span, div, li, h1, h2, h3, h4 {
   font-family: Inter, "Segoe UI", sans-serif !important;
+}
+html, body, .stApp, [data-testid="stMarkdownContainer"], p, li, label {
+  font-size: 15.5px !important;
+  line-height: 1.5;
 }
 .stApp { background: #F6F8FB; color: #0F172A; }
 h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 700 !important; }
 .brand {
-  font-size: 1.15rem;
+  font-size: 1.15rem !important;
   letter-spacing: -0.01em;
   color: #0F172A;
   font-weight: 700;
   display: flex;
   align-items: center;
   gap: 0.55rem;
-  margin-bottom: 0.25rem;
+  margin: 0;
 }
 .brand:before {
   content: "";
@@ -132,10 +139,11 @@ h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 70
   background: linear-gradient(135deg, #4F46E5, #06B6D4);
   flex: none;
 }
+.ea-topbar { margin-bottom: 0.75rem; }
 .ea-eyebrow {
   display: inline-block;
   background: #EEF2FF; color: #4F46E5;
-  font-weight: 600; font-size: 0.8rem;
+  font-weight: 600; font-size: 0.8rem !important;
   padding: 0.35rem 0.75rem; border-radius: 999px;
   margin-bottom: 0.75rem;
 }
@@ -146,7 +154,7 @@ h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 70
   color: #0F172A !important;
   margin: 0.2rem 0 0.6rem 0 !important;
 }
-.ea-lead { color: #475569; font-size: 1.05rem; line-height: 1.5; max-width: 40rem; }
+.ea-lead { color: #475569; font-size: 1.05rem !important; line-height: 1.5; max-width: 40rem; }
 .ea-headline {
   font-size: clamp(1.45rem, 3vw, 1.95rem) !important;
   line-height: 1.2 !important;
@@ -154,17 +162,25 @@ h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 70
   color: #0F172A !important;
   margin: 0.15rem 0 0.4rem 0 !important;
 }
-.ea-subhead { color: #475569; font-size: 1.02rem; line-height: 1.5; max-width: 48rem; }
+.ea-subhead { color: #475569; font-size: 1.02rem !important; line-height: 1.5; max-width: 48rem; }
 .ea-sec {
-  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 0.08em;
   color: #64748B; font-weight: 600; margin: 0.4rem 0 0.6rem 0;
 }
-.ea-lbl { color: #94A3B8; font-size: 0.8rem; font-weight: 600; margin: 0.55rem 0 0.1rem 0; }
+.ea-lbl { color: #94A3B8; font-size: 0.8rem !important; font-weight: 600; margin: 0.55rem 0 0.1rem 0; }
+.ea-kpi-cap {
+  color: #64748B !important; font-size: 0.8rem !important; margin: -0.35rem 0 0.6rem 0.15rem;
+}
+.ea-pill {
+  display: inline-block; background: #EEF2FF; color: #4F46E5;
+  font-size: 0.75rem !important; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 999px;
+  margin-right: 0.4rem;
+}
+.ea-conf { color: #059669; font-size: 0.8rem !important; font-weight: 500; }
 .ea-dropzone {
   background: #fff; border: 2px dashed #C7D2FE; border-radius: 18px;
   padding: 0.4rem 0.6rem 0.2rem; margin: 0.6rem 0 0.8rem;
 }
-/* Maquillaje frágil del uploader (Streamlit no traduce el chrome en inglés) */
 [data-testid="stFileUploaderDropzone"] small,
 [data-testid="stFileUploaderDropzone"] [data-testid="stFileUploaderFileData"] {
   font-size: 0 !important;
@@ -174,19 +190,31 @@ h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 70
   font-size: 0.85rem !important;
   color: #64748B;
 }
-section[data-testid="stFileUploader"] button + div small {
-  font-size: 0 !important;
-}
+section[data-testid="stFileUploader"] button + div small { font-size: 0 !important; }
 div[data-testid="stMetric"] {
   background: #fff; border: 1px solid #E5E9F0; border-radius: 16px;
   padding: 0.85rem 1rem;
 }
+/* Neutralizar deltas verdes residuales */
+div[data-testid="stMetricDelta"] { color: #64748B !important; }
 @media (max-width: 768px) {
   div[data-testid="stMetric"] label { font-size: 0.75rem !important; }
   div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.15rem !important; }
-  .brand { font-size: 1.05rem; }
+  .brand { font-size: 1.05rem !important; }
   .ea-hero-title { font-size: 1.55rem !important; }
   .ea-headline { font-size: 1.35rem !important; }
+  /* KPIs 2×2 en 390px: no apilar una métrica por fila */
+  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) {
+    flex-wrap: nowrap !important;
+    flex-direction: row !important;
+    gap: 0.45rem !important;
+  }
+  div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) > div[data-testid="stColumn"] {
+    min-width: 0 !important;
+    flex: 1 1 50% !important;
+    width: 50% !important;
+  }
+  .ea-kpi-cap { font-size: 0.72rem !important; }
 }
 </style>
 """
@@ -291,46 +319,93 @@ def _run_discovery(df, selected, quality_domain, use_ollama):
 
 
 def _render_explore(df, profile):
+    from estacion.ux.presentation import friendly_column
+
     st.subheader("Explorar")
-    st.caption("Mirálos vos: histograma, cajas y relaciones. Los ejes usan formato es-AR.")
+    st.caption("Mirálos vos: histograma, cajas y relaciones.")
     defaults = default_explore_columns(profile)
     cols = list(df.columns)
     plot_cols = [c for c in cols if c not in set(profile.identifier_columns)] or cols
+
+    def _lab(c: str) -> str:
+        return friendly_column(c)
+
     left, right = st.columns(2)
     with left:
         hist_default = defaults["hist"] if defaults["hist"] in plot_cols else plot_cols[0]
         hist_idx = plot_cols.index(hist_default) if hist_default in plot_cols else 0
-        col = st.selectbox("¿Cómo se reparten los valores?", plot_cols, index=hist_idx, key="hist_col")
+        col = st.selectbox(
+            "¿Cómo se reparten los valores?",
+            plot_cols,
+            index=hist_idx,
+            key="hist_col",
+            format_func=_lab,
+        )
         color_opts = ["—"] + [c for c in profile.categorical_columns if c in plot_cols]
-        color = st.selectbox("Color (opcional)", color_opts, key="hist_color")
-        st.plotly_chart(histogram(df, col, None if color == "—" else color), width="stretch")
+        color = st.selectbox(
+            "Color (opcional)",
+            color_opts,
+            key="hist_color",
+            format_func=lambda c: "—" if c == "—" else _lab(c),
+        )
+        st.plotly_chart(
+            histogram(df, col, None if color == "—" else color, label=_lab(col)),
+            width="stretch",
+        )
     with right:
         nums = [c for c in (profile.numeric_columns or plot_cols) if c not in set(profile.identifier_columns)]
         nums = nums or plot_cols
         x_def = defaults["scatter_x"] if defaults["scatter_x"] in nums else nums[0]
         y_cands = [c for c in nums if c != x_def] or nums
         y_def = defaults["scatter_y"] if defaults["scatter_y"] in y_cands else y_cands[0]
-        x = st.selectbox("¿Se mueven juntas? Eje X", nums, index=nums.index(x_def), key="sx")
+        x = st.selectbox(
+            "¿Se mueven juntas? Eje X",
+            nums,
+            index=nums.index(x_def),
+            key="sx",
+            format_func=_lab,
+        )
+        y_opts = [c for c in nums if c != x] or nums
         y = st.selectbox(
             "Eje Y",
-            [c for c in nums if c != x] or nums,
-            index=max(0, ([c for c in nums if c != x] or nums).index(y_def)
-                      if y_def in ([c for c in nums if c != x] or nums) else 0),
+            y_opts,
+            index=max(0, y_opts.index(y_def) if y_def in y_opts else 0),
             key="sy",
+            format_func=_lab,
         )
-        st.plotly_chart(scatter(df, x, y, trendline=True), width="stretch")
+        st.plotly_chart(
+            scatter(df, x, y, trendline=True, x_label=_lab(x), y_label=_lab(y)),
+            width="stretch",
+        )
 
     if len(profile.numeric_columns) >= 2:
         corr = correlation_analysis(df, profile.numeric_columns[:20])
+        labels = {c: _lab(c) for c in corr["spearman_matrix"].columns}
         st.plotly_chart(
-            correlation_heatmap(corr["spearman_matrix"], "Mapa de relaciones (más oscuro = más relacionadas)"),
+            correlation_heatmap(
+                corr["spearman_matrix"],
+                "Mapa de relaciones (más oscuro = más relacionadas)",
+                labels=labels,
+            ),
             width="stretch",
         )
 
     if profile.datetime_columns and profile.numeric_columns:
-        dcol = st.selectbox("Fecha", profile.datetime_columns)
-        vcol = st.selectbox("Valor temporal", profile.numeric_columns, key="ts_val")
-        st.plotly_chart(time_series_plot(df, dcol, vcol), width="stretch")
+        dcol = st.selectbox(
+            "Fecha",
+            profile.datetime_columns,
+            format_func=_lab,
+        )
+        vcol = st.selectbox(
+            "Valor temporal",
+            profile.numeric_columns,
+            key="ts_val",
+            format_func=_lab,
+        )
+        st.plotly_chart(
+            time_series_plot(df, dcol, vcol, value_label=_lab(vcol)),
+            width="stretch",
+        )
         with st.expander("Detalle temporal y pronóstico", expanded=False):
             tres = temporal_analysis(df, dcol, vcol)
             st.write(
@@ -377,7 +452,19 @@ def _render_explore(df, profile):
                     st.warning(fc.get("reason"))
 
 
-def _render_informe(df, selected, store):
+def _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=None) -> bytes:
+    out_dir = ROOT / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    unit = getattr(ctx, "money_unit", "unidades") if ctx else "unidades"
+    cache_key = f"_pdf_bytes::{selected}::{len(findings)}::{profile.n_rows}::{unit}"
+    if cache_key not in st.session_state:
+        pdf_path = out_dir / f"{selected}_informe.pdf"
+        generate_pdf_report(df, profile, findings, pdf_path, artifacts, ctx=ctx)
+        st.session_state[cache_key] = pdf_path.read_bytes()
+    return st.session_state[cache_key]
+
+
+def _render_informe(df, selected, store, ctx=None):
     st.subheader("Informe")
     profile = st.session_state.get("profile")
     findings = st.session_state.get("findings")
@@ -388,16 +475,11 @@ def _render_informe(df, selected, store):
     out_dir = ROOT / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # PDF en un solo clic: generar (o reutilizar cache de sesión) y ofrecer download directo.
-    cache_key = f"_pdf_bytes::{selected}::{len(findings)}::{profile.n_rows}"
-    if cache_key not in st.session_state:
-        pdf_path = out_dir / f"{selected}_informe.pdf"
-        with st.spinner("Preparando PDF…"):
-            generate_pdf_report(df, profile, findings, pdf_path, artifacts)
-            st.session_state[cache_key] = pdf_path.read_bytes()
+    with st.spinner("Preparando PDF…"):
+        pdf_data = _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=ctx)
     st.download_button(
         "Descargar informe (PDF)",
-        data=st.session_state[cache_key],
+        data=pdf_data,
         file_name=f"{selected}_informe.pdf",
         mime="application/pdf",
         type="primary",
@@ -405,12 +487,12 @@ def _render_informe(df, selected, store):
     )
 
     with st.expander("Otros formatos"):
-        md = generate_markdown_report(profile, findings, artifacts)
+        md = generate_markdown_report(profile, findings, artifacts, ctx=ctx)
         st.download_button("Descargar Markdown", md, file_name=f"{selected}_informe.md")
         js = json.dumps([f.to_dict() for f in findings], ensure_ascii=False, indent=2, default=str)
         st.download_button("Descargar hallazgos (JSON)", js, file_name=f"{selected}_hallazgos.json")
         if st.button("También guardar en carpeta outputs/"):
-            generate_markdown_report(profile, findings, artifacts, out_dir / f"{selected}_informe.md")
+            generate_markdown_report(profile, findings, artifacts, out_dir / f"{selected}_informe.md", ctx=ctx)
             export_findings_json(findings, out_dir / f"{selected}_hallazgos.json")
             st.success("Guardado en outputs/")
 
@@ -425,8 +507,42 @@ def _render_informe(df, selected, store):
             st.success(f"Análisis guardado: {meta.id}")
 
     st.markdown("#### Vista previa del informe")
-    # Una sola vez: el markdown ya incluye el resumen en lenguaje simple.
-    st.markdown(generate_markdown_report(profile, findings, artifacts)[:3500])
+    st.markdown(generate_markdown_report(profile, findings, artifacts, ctx=ctx)[:4000])
+
+
+def _render_topbar(*, show_actions: bool = False, df=None, selected: str | None = None, ctx=None) -> None:
+    """Barra superior compacta: marca + acciones (maqueta A)."""
+    left, mid, right = st.columns([3.2, 1.15, 1.25])
+    with left:
+        st.markdown('<div class="brand ea-topbar">Estación de Análisis</div>', unsafe_allow_html=True)
+    if not show_actions:
+        return
+
+    def _on_clear() -> None:
+        st.session_state["_reset_uploads"] = True
+        st.session_state.pop("repair_uploaded_files", None)
+        st.session_state.pop("_prefer_loaded_upload", None)
+
+    with mid:
+        st.button("Subir otro archivo", on_click=_on_clear, key="top_clear_upload", width="stretch")
+    with right:
+        profile = st.session_state.get("profile")
+        findings = st.session_state.get("findings")
+        artifacts = st.session_state.get("artifacts", {})
+        if profile is not None and findings is not None and df is not None and selected:
+            try:
+                data = _pdf_bytes_for(df, selected, profile, findings, artifacts, ctx=ctx)
+                st.download_button(
+                    "Descargar PDF",
+                    data=data,
+                    file_name=f"{selected}_informe.pdf",
+                    mime="application/pdf",
+                    type="primary",
+                    key="pdf_dl_topbar",
+                    width="stretch",
+                )
+            except Exception:
+                st.caption("PDF no disponible")
 
 
 def _build_copy_context(df, profile, selected: str):
@@ -437,20 +553,16 @@ def _build_copy_context(df, profile, selected: str):
         resolve_money_unit,
     )
 
-    units = load_dictionary_units(name_hint=selected or getattr(profile, "name", None))
     override = st.session_state.get("money_unit_override")
+    # Solo cargar diccionario en Auto (match exacto de stem, no substring "venta")
+    units: dict = {}
     if override in (None, "Auto"):
+        units = load_dictionary_units(name_hint=selected or getattr(profile, "name", None))
         override = None
     target = None
     if profile is not None:
         target = (profile.possible_targets or profile.numeric_columns or [None])[0]
-    money = resolve_money_unit(column=target, dictionary_units=units, override=override)
-    # Si el diccionario trae $ en revenue, usarlo aunque el target no esté
-    if money == "unidades" and units:
-        for col, u in units.items():
-            if u and str(u).strip() in {"$", "USD", "ARS"}:
-                money = str(u).strip()
-                break
+    money = resolve_money_unit(column=target, dictionary_units=units or None, override=override)
     return CopyContext(
         df=df,
         profile=profile,
@@ -463,8 +575,6 @@ def main():
     # Reset de uploads antes de instanciar widgets (on_click del botón "Quitar…").
     if st.session_state.pop("_reset_uploads", False):
         _clear_loaded_data()
-
-    st.markdown('<div class="brand">Estación de Análisis</div>', unsafe_allow_html=True)
 
     store = SessionStore(ROOT / "outputs" / "sessions")
 
@@ -608,6 +718,7 @@ def main():
         load_metas = st.session_state.get("load_metas") or {}
 
     if not tables:
+        _render_topbar(show_actions=False)
         render_welcome(demo_select_key=DEMO_SELECT_KEY)
         return
 
@@ -617,6 +728,9 @@ def main():
     meta = (st.session_state.get("load_metas") or load_metas or {}).get(selected) or {}
     from_upload = st.session_state.get("load_source") == "upload"
     bad_parse = bool(meta.get("suspicious_parse") and meta.get("n_cols") == 1)
+    # Marca visible mientras aún no hay análisis listo (preview / Analizar)
+    if not _analysis_ready(selected, quality_domain):
+        _render_topbar(show_actions=False)
 
     def _on_clear_upload() -> None:
         st.session_state["_reset_uploads"] = True
@@ -692,6 +806,9 @@ def main():
     artifacts = st.session_state["artifacts"]
     narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
 
+    copy_ctx = _build_copy_context(df, profile, selected)
+    _render_topbar(show_actions=True, df=df, selected=selected, ctx=copy_ctx)
+
     if profile.n_rows < 30 and not bad_parse:
         from estacion.ux.presentation import format_n_rows
 
@@ -699,8 +816,6 @@ def main():
             f"Tu archivo tiene solo **{format_n_rows(profile.n_rows)}**. "
             "Con tan pocas filas es difícil encontrar patrones (recomendado: 30 o más)."
         )
-
-    copy_ctx = _build_copy_context(df, profile, selected)
 
     if not advanced:
         tabs = st.tabs(["Resumen", "Explorar", "Informe"])
@@ -734,7 +849,7 @@ def main():
                     width="stretch",
                 )
         with tabs[2]:
-            _render_informe(df, selected, store)
+            _render_informe(df, selected, store, ctx=copy_ctx)
         return
 
     # --- Modo avanzado ---
@@ -1322,7 +1437,7 @@ def main():
 
     with tabs[8]:
         st.caption("¿Para qué sirve? Bajar el informe y guardar el análisis para más tarde.")
-        _render_informe(df, selected, store)
+        _render_informe(df, selected, store, ctx=copy_ctx)
         st.subheader("Comparar dos análisis guardados")
         sessions = store.list_sessions()
         if len(sessions) < 2:

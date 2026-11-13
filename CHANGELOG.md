@@ -9,6 +9,10 @@
 - Bienvenida sin titular duplicado; demos en español; uploader maquillado a es-AR (CSS frágil)
 - Gráficos Plotly con paleta índigo/lila y separadores es-AR; PDF claro alineado
 - Tests nuevos de copy/formato (`tests/test_ux_redesign.py`)
+- Follow-up PR#2: override de unidad gana al diccionario; diccionario solo por stem exacto (no “venta” en el nombre)
+- Brecha Online ponderada por filas (~+19 % vs $311); “más de la mitad” ≥55 %; copy distinto por grupo
+- Informe MD/PDF con titular, unidades, conteo 11, decimales es-AR y sin jerga (Spearman/outliers/covariables)
+- KPI captions grises; badges lado a lado; Norte primero + línea de tamaño de cliente; top bar PDF/Subir otro; KPIs 2×2
 
 ## v0.6.2 — UX v2 (2026-11-13)
 
