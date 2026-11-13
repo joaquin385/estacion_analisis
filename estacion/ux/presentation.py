@@ -1574,6 +1574,10 @@ def suggested_next_steps(
     ctx = ctx or _DEFAULT_CTX
     steps: list[str] = []
     ordered = dedupe_findings(findings)
+    # Problemas primero (acciones urgentes), después oportunidades
+    ordered = [f for f in ordered if finding_track(f) == "problemas"] + [
+        f for f in ordered if finding_track(f) != "problemas"
+    ]
     for f in ordered:
         if len(steps) >= max_steps:
             break
