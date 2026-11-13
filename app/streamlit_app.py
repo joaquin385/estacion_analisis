@@ -75,6 +75,7 @@ from estacion.ux.presentation import (
     default_explore_columns,
     default_causal_columns,
     format_p_value,
+    format_number,
 )
 try:
     from app.panels import (
@@ -83,6 +84,8 @@ try:
         render_finding_cards,
         render_plain_summary,
         render_segmentation_human,
+        DEMO_SELECT_KEY,
+        WELCOME_UPLOAD_KEY,
     )
 except ImportError:  # streamlit a veces pone app/ en sys.path
     from panels import (  # type: ignore
@@ -91,6 +94,8 @@ except ImportError:  # streamlit a veces pone app/ en sys.path
         render_finding_cards,
         render_plain_summary,
         render_segmentation_human,
+        DEMO_SELECT_KEY,
+        WELCOME_UPLOAD_KEY,
     )
 import json
 
@@ -277,12 +282,21 @@ def _render_informe(df, selected, store):
     out_dir = ROOT / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if st.button("Descargar informe (PDF)", type="primary"):
+    # PDF en un solo clic: generar (o reutilizar cache de sesión) y ofrecer download directo.
+    cache_key = f"_pdf_bytes::{selected}::{len(findings)}::{profile.n_rows}"
+    if cache_key not in st.session_state:
         pdf_path = out_dir / f"{selected}_informe.pdf"
-        with st.spinner("Generando PDF…"):
+        with st.spinner("Preparando PDF…"):
             generate_pdf_report(df, profile, findings, pdf_path, artifacts)
-        with open(pdf_path, "rb") as fh:
-            st.download_button("Descargar PDF", fh, file_name=pdf_path.name, key="pdf_dl")
+            st.session_state[cache_key] = pdf_path.read_bytes()
+    st.download_button(
+        "Descargar informe (PDF)",
+        data=st.session_state[cache_key],
+        file_name=f"{selected}_informe.pdf",
+        mime="application/pdf",
+        type="primary",
+        key="pdf_dl_direct",
+    )
 
     with st.expander("Otros formatos"):
         md = generate_markdown_report(profile, findings, artifacts)
@@ -294,17 +308,18 @@ def _render_informe(df, selected, store):
             export_findings_json(findings, out_dir / f"{selected}_hallazgos.json")
             st.success("Guardado en outputs/")
 
-    sess_name = st.text_input("Nombre de sesión", value=selected)
-    if st.button("Guardar sesión"):
-        meta = store.save(df, profile, findings, artifacts, name=sess_name, notes="UI save")
-        st.success(f"Sesión guardada: {meta.id}")
+    with st.expander("Guardar este análisis para verlo después"):
+        st.caption(
+            "Guardá una copia local del análisis (datos + hallazgos) para reabrirla "
+            "más adelante desde “Cargar sesión” en la barra lateral."
+        )
+        sess_name = st.text_input("Nombre para este análisis", value=selected)
+        if st.button("Guardar análisis", help="Queda disponible en esta computadora, en outputs/sessions."):
+            meta = store.save(df, profile, findings, artifacts, name=sess_name, notes="UI save")
+            st.success(f"Análisis guardado: {meta.id}")
 
     st.markdown("#### Vista previa del informe")
-    bullets = __import__("estacion.ux.presentation", fromlist=["build_plain_summary"]).build_plain_summary(
-        findings, profile, artifacts
-    )
-    for b in bullets:
-        st.markdown(f"- {b}")
+    # Una sola vez: el markdown ya incluye el resumen en lenguaje simple.
     st.markdown(generate_markdown_report(profile, findings, artifacts)[:3500])
 
 
@@ -325,16 +340,23 @@ def main():
             type=["csv", "xlsx", "xls"],
             accept_multiple_files=True,
             help="También acepta CSV de Excel en español (separador ; y decimal ,).",
+            key="sidebar_uploaded_files",
         )
         demo_keys = list(DEMO_LABELS.keys())
-        forced = st.session_state.pop("want_commercial", None)
-        if forced:
+        # El botón de la portada (on_click) setea DEMO_SELECT_KEY antes de este
+        # punto en el rerun. Key fija: el valor persiste entre interacciones.
+        if st.session_state.pop("want_commercial", None):
             st.session_state["_auto_analyze_once"] = True
-        demo_index = demo_keys.index(forced) if forced in demo_keys else 0
+            # want_commercial se setea en el mismo on_click que DEMO_SELECT_KEY;
+            # no volvemos a asignar DEMO_SELECT_KEY acá (el selectbox ya puede existir).
+        if DEMO_SELECT_KEY not in st.session_state:
+            st.session_state[DEMO_SELECT_KEY] = "—"
+        elif st.session_state[DEMO_SELECT_KEY] not in demo_keys:
+            st.session_state[DEMO_SELECT_KEY] = "—"
         demo = st.selectbox(
             "O probá un ejemplo",
             demo_keys,
-            index=demo_index,
+            key=DEMO_SELECT_KEY,
             format_func=lambda k: DEMO_LABELS[k],
         )
 
@@ -365,11 +387,22 @@ def main():
     tables: dict[str, pd.DataFrame] = {}
     load_metas: dict[str, dict] = {}
 
+    # Persistimos tablas cargadas fuera de las keys de widgets: Streamlit limpia
+    # el estado de un file_uploader cuando deja de renderizarse (p.ej. al salir
+    # de la portada).
+    welcome_uploaded = st.session_state.get(WELCOME_UPLOAD_KEY) or []
+    upload_files = uploaded or welcome_uploaded
+    if upload_files:
+        tables, load_metas = _load_uploaded(upload_files)
+        st.session_state["loaded_tables"] = tables
+        st.session_state["load_metas"] = load_metas
+        st.session_state["load_source"] = "upload"
+
     if pick_session and pick_session != "—":
         sid = pick_session.rsplit("(", 1)[-1].rstrip(")")
         loaded = store.load(sid)
         if loaded.get("df") is not None:
-            tables[loaded["meta"]["dataset_name"]] = loaded["df"]
+            tables = {loaded["meta"]["dataset_name"]: loaded["df"]}
             from estacion.core.types import Finding, FindingCategory, FindingSeverity
 
             findings_loaded = []
@@ -402,29 +435,39 @@ def main():
             st.session_state["active_table"] = loaded["meta"]["dataset_name"]
             st.session_state["quality_domain"] = quality_domain
             st.session_state["narratives"] = interpret_findings(findings_loaded, try_ollama=use_ollama)
+            st.session_state["loaded_tables"] = tables
+            st.session_state["load_source"] = "session"
             st.sidebar.success(f"Sesión {sid} cargada")
-    elif uploaded:
-        tables, load_metas = _load_uploaded(uploaded)
-        st.session_state["load_metas"] = load_metas
+    elif upload_files:
+        pass  # ya cargado arriba; tiene prioridad sobre el demo
     elif demo and demo != "—":
         path = ROOT / "data" / "synthetic" / f"{demo}.csv"
         if path.exists():
             df, meta = load_table(path)
-            tables[meta["name"]] = df
-            load_metas[meta["name"]] = meta
+            tables = {meta["name"]: df}
+            load_metas = {meta["name"]: meta}
+            st.session_state["loaded_tables"] = tables
+            st.session_state["load_metas"] = load_metas
+            st.session_state["load_source"] = "demo"
         else:
             st.warning("Dataset de ejemplo no generado. Ejecutá: python -m data.synthetic.generate_datasets")
+    elif st.session_state.get("loaded_tables") and st.session_state.get("load_source") == "upload":
+        # El file_uploader de portada deja de renderizarse y Streamlit limpia su key;
+        # recuperamos las tablas ya parseadas.
+        tables = st.session_state["loaded_tables"]
+        load_metas = st.session_state.get("load_metas") or {}
 
     if not tables:
-        render_welcome()
+        render_welcome(demo_select_key=DEMO_SELECT_KEY)
         return
 
     names = list(tables.keys())
     selected = st.sidebar.selectbox("Tabla activa", names) if len(names) > 1 else names[0]
     df = tables[selected]
     meta = (st.session_state.get("load_metas") or load_metas or {}).get(selected) or {}
+    from_upload = st.session_state.get("load_source") == "upload"
 
-    if uploaded or meta.get("warnings") or meta.get("suspicious_parse"):
+    if from_upload or meta.get("warnings") or meta.get("suspicious_parse"):
         with st.expander("Vista previa de la carga", expanded=bool(meta.get("suspicious_parse")) or meta.get("n_cols") == 1):
             render_load_preview(df, meta)
 
@@ -450,6 +493,12 @@ def main():
     artifacts = st.session_state["artifacts"]
     narratives = {n["id"]: n["narrative"] for n in st.session_state.get("narratives", [])}
 
+    if profile.n_rows < 30:
+        st.warning(
+            f"Tu archivo tiene solo **{profile.n_rows} filas**. "
+            "Con tan pocas filas es difícil encontrar patrones (recomendado: 30 o más)."
+        )
+
     if not advanced:
         tabs = st.tabs(["Resumen", "Explorar tus datos", "Informe"])
         with tabs[0]:
@@ -458,6 +507,12 @@ def main():
             c1.metric("Filas", f"{profile.n_rows:,}")
             c2.metric("Columnas", profile.n_cols)
             c3.metric("Hallazgos", len(findings))
+            if not findings:
+                st.info(
+                    "No encontramos hallazgos automáticos. "
+                    "Con pocas filas o datos muy parejos es normal. "
+                    "Probá Explorar para mirar los números a ojo."
+                )
             render_plain_summary(findings, profile, artifacts)
             st.markdown("---")
             render_finding_cards(findings, narratives)
@@ -485,19 +540,20 @@ def main():
     # --- Modo avanzado ---
     tabs = st.tabs(
         [
-            "Resumen / Descubrimiento",
-            "Perfil / Reglas",
-            "Datos faltantes",
+            "Resumen",
+            "Perfil",
+            "Faltantes",
             "Explorar",
             "Estadística",
-            "Segmentación",
-            "¿Qué causa qué?",
-            "Comparar archivos",
-            "Informe / Sesiones",
+            "Segmentos",
+            "Causa",
+            "Comparar",
+            "Informe",
         ]
     )
 
     with tabs[0]:
+        st.caption("¿Para qué sirve? Ver el resumen de hallazgos en lenguaje simple.")
         st.subheader("Descubrimiento")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Filas", f"{profile.n_rows:,}")
@@ -509,10 +565,16 @@ def main():
             f"{fdr.get('n_significant', '—')}/{fdr.get('n_tested', '—')}",
             help="Tras corregir por muchas pruebas (FDR).",
         )
+        if not findings:
+            st.info(
+                "No encontramos hallazgos automáticos. "
+                "Con pocas filas o datos muy parejos es normal."
+            )
         render_plain_summary(findings, profile, artifacts)
         render_finding_cards(findings, narratives)
 
     with tabs[1]:
+        st.caption("¿Para qué sirve? Ficha de cada columna y reglas de calidad editables.")
         st.subheader("Perfil del dataset")
         st.dataframe(
             pd.DataFrame(
@@ -545,11 +607,13 @@ def main():
             "Columnas no negativas",
             list(df.columns),
             default=[c for c in base.non_negative_columns if c in df.columns],
+            placeholder="Elegí opciones",
         )
         ids_u = st.multiselect(
             "IDs que deben ser únicos",
             list(df.columns),
             default=[c for c in base.id_columns_must_be_unique if c in df.columns],
+            placeholder="Elegí opciones",
         )
         sentinels = st.text_input(
             "Valores trampa (coma-separados)",
@@ -621,8 +685,8 @@ def main():
             st.dataframe(pd.DataFrame(dv.get("findings") or []), width="stretch")
 
     with tabs[2]:
+        st.caption("¿Para qué sirve? Entender si los vacíos parecen al azar o siguen un patrón.")
         st.subheader("Datos faltantes")
-        st.caption("¿Los vacíos parecen al azar o dependen de otras columnas?")
         if st.button("Analizar faltantes", key="miss_btn"):
             st.session_state["missingness"] = analyze_missingness(df)
         miss = st.session_state.get("missingness") or artifacts.get("missingness")
@@ -634,9 +698,11 @@ def main():
             st.info("Pulsá 'Analizar faltantes' para el detalle.")
 
     with tabs[3]:
+        st.caption("¿Para qué sirve? Mirar tus datos con gráficos antes de confiar en un número.")
         _render_explore(df, profile)
 
     with tabs[4]:
+        st.caption("¿Para qué sirve? Comparar grupos o ajustar un modelo simple y dirigido.")
         st.subheader("Estadística dirigida")
         mode = st.radio(
             "Análisis",
@@ -657,11 +723,24 @@ def main():
                         f"{'Hay diferencias significativas' if res.get('significant') else 'No hay diferencias claras'} "
                         f"entre grupos (p = {format_p_value(res.get('p_value'))})."
                     )
-                    st.write(f"Efecto d = {res.get('effect_size_cohens_d')}")
+                    effect = res.get("effect_size_cohens_d")
+                    eta = res.get("effect_size_eta_sq")
+                    if effect is not None:
+                        st.write(f"Tamaño del efecto (d de Cohen) ≈ {format_number(effect)}")
+                    elif eta is not None:
+                        st.write(f"Tamaño del efecto (eta²) ≈ {format_number(eta)}")
+                    else:
+                        st.write(
+                            "Tamaño del efecto: no se pudo calcular "
+                            "(la comparación no devolvió d de Cohen ni eta²)."
+                        )
                     if res.get("group_means"):
                         st.dataframe(
                             pd.DataFrame(
-                                [{"grupo": k, "media": v} for k, v in res["group_means"].items()]
+                                [
+                                    {"grupo": k, "media": format_number(val)}
+                                    for k, val in res["group_means"].items()
+                                ]
                             ),
                             width="stretch",
                         )
@@ -673,23 +752,38 @@ def main():
                     st.warning(res.get("reason"))
         elif mode == "Regresión lineal":
             y = st.selectbox("y", profile.numeric_columns or list(df.columns), key="lin_y")
-            xs = st.multiselect("x", [c for c in df.columns if c != y], key="lin_x")
+            xs = st.multiselect(
+                "x", [c for c in df.columns if c != y], key="lin_x", placeholder="Elegí opciones"
+            )
             if xs and st.button("Ajustar OLS"):
                 res = linear_regression(df, y, xs)
                 st.text(res.get("summary_text") or res)
                 st.write(res.get("limitations"))
         else:
             y = st.selectbox("y binaria", profile.possible_targets or list(df.columns), key="log_y")
-            xs = st.multiselect("x", [c for c in df.columns if c != y], key="log_x")
+            xs = st.multiselect(
+                "x", [c for c in df.columns if c != y], key="log_x", placeholder="Elegí opciones"
+            )
             if xs and st.button("Ajustar Logit"):
                 res = logistic_regression(df, y, xs)
                 st.text(res.get("summary_text") or res)
                 st.write(res.get("limitations"))
 
     with tabs[5]:
+        st.caption("¿Para qué sirve? Buscar 'tipos' de filas parecidas (clientes, pedidos, etc.).")
         st.subheader("Segmentación")
-        nums = st.multiselect("Numéricas", profile.numeric_columns, default=profile.numeric_columns[:5])
-        cats = st.multiselect("Categóricas (mixtas)", profile.categorical_columns, default=[])
+        nums = st.multiselect(
+            "Numéricas",
+            profile.numeric_columns,
+            default=profile.numeric_columns[:5],
+            placeholder="Elegí opciones",
+        )
+        cats = st.multiselect(
+            "Categóricas (mixtas)",
+            profile.categorical_columns,
+            default=[],
+            placeholder="Elegí opciones",
+        )
         if st.button("Correr segmentación") and len(nums) >= 2:
             with st.spinner("Evaluando agrupamientos…"):
                 st.session_state["seg"] = run_segmentation(df, nums, cats)
@@ -699,11 +793,18 @@ def main():
             labels = seg.get("kmeans", {}).get("labels")
             coords = seg.get("pca_coords")
             if labels is not None and coords is not None:
-                if not seg.get("natural_groups_likely"):
-                    st.caption("Gráfico atenuado: partición forzada.")
-                st.plotly_chart(cluster_scatter(coords, labels), width="stretch")
+                natural = bool(seg.get("natural_groups_likely"))
+                if not natural:
+                    with st.expander("Ver gráfico (atenuado: sin grupos naturales)"):
+                        st.plotly_chart(
+                            cluster_scatter(coords, labels, muted=True),
+                            width="stretch",
+                        )
+                else:
+                    st.plotly_chart(cluster_scatter(coords, labels), width="stretch")
 
     with tabs[6]:
+        st.caption("¿Para qué sirve? Explorar si una cosa se asocia a otra controlando confusores. No prueba causalidad.")
         st.subheader("¿Qué causa qué? (exploratorio)")
         st.warning("Ningún resultado demuestra causalidad. Son asociaciones bajo supuestos fuertes.")
         causal_mode = st.radio(
@@ -740,6 +841,7 @@ def main():
                 default=[c for c in defaults_c["confounders"] if c not in {treatment, outcome}],
                 help="Variables que afectan ambos, ej. tamaño de cliente.",
                 key="c_c",
+                placeholder="Elegí opciones",
             )
             if st.button("Explorar causalmente"):
                 if outcome not in profile.numeric_columns and not pd.api.types.is_numeric_dtype(df[outcome]):
@@ -806,6 +908,7 @@ def main():
                 periods,
                 default=periods[-1:] if periods else [],
                 help="Períodos después de la intervención.",
+                placeholder="Elegí opciones",
             )
             if post and st.button("Correr DiD"):
                 st.session_state["did"] = difference_in_differences_multipperiod(
@@ -863,6 +966,7 @@ def main():
                 "Covariables AIPW (opcional)",
                 [c for c in cols if c not in {outcome, unit, time_c, tt}],
                 key="cs_aipw_x",
+                placeholder="Elegí opciones",
             )
             b1, b2 = st.columns(2)
             with b1:
@@ -891,7 +995,13 @@ def main():
                     st.warning(aipw.get("reason"))
         else:
             st.caption("Editor DAG: roles + aristas + canvas.")
-            nodes = st.multiselect("Nodos", cols, default=cols[: min(6, len(cols))], key="dag_nodes")
+            nodes = st.multiselect(
+                "Nodos",
+                cols,
+                default=cols[: min(6, len(cols))],
+                key="dag_nodes",
+                placeholder="Elegí opciones",
+            )
             roles = {}
             if nodes:
                 rc1, rc2 = st.columns(2)
@@ -929,14 +1039,20 @@ def main():
                 render_interactive_dag(nodes, st.session_state["dag_edges"], roles)
 
     with tabs[7]:
+        st.caption("¿Para qué sirve? Ver si dos planillas (ej. enero vs febrero) cambiaron de forma.")
         st.subheader("Comparar dos archivos")
         if len(tables) < 2:
-            st.info("Cargá al menos dos archivos, o usá un split de demo.")
-            frac = st.slider("Split aleatorio", 0.1, 0.9, 0.5)
-            if st.button("Comparar split aleatorio"):
-                a = df.sample(frac=frac, random_state=42)
-                b = df.drop(a.index)
-                st.session_state["drift"] = compare_datasets(a, b, "split_a", "split_b")
+            st.info("Cargá al menos dos archivos para compararlos de verdad.")
+            with st.expander("Probar con una demo (partir este archivo al azar)"):
+                st.caption(
+                    "Parte la tabla actual en dos mitades al azar solo para probar la pantalla. "
+                    "No reemplaza comparar dos archivos reales."
+                )
+                frac = st.slider("Proporción de la primera mitad", 0.1, 0.9, 0.5)
+                if st.button("Comparar mitades de demo"):
+                    a = df.sample(frac=frac, random_state=42)
+                    b = df.drop(a.index)
+                    st.session_state["drift"] = compare_datasets(a, b, "split_a", "split_b")
         else:
             a_name = st.selectbox("Dataset A", names, key="drift_a")
             b_name = st.selectbox("Dataset B", [n for n in names if n != a_name] or names, key="drift_b")
@@ -944,26 +1060,33 @@ def main():
                 st.session_state["drift"] = compare_datasets(tables[a_name], tables[b_name], a_name, b_name)
         drift = st.session_state.get("drift")
         if drift:
+            from estacion.ux.result_views import rename_df_columns_es
+
             st.write(drift.get("interpretation"))
             st.write(f"Columnas con cambio detectado: {drift.get('n_drifted', 0)}")
-            st.dataframe(pd.DataFrame(drift["column_tests"]), width="stretch")
+            st.dataframe(rename_df_columns_es(pd.DataFrame(drift["column_tests"])), width="stretch")
 
     with tabs[8]:
+        st.caption("¿Para qué sirve? Bajar el informe y guardar el análisis para más tarde.")
         _render_informe(df, selected, store)
-        st.subheader("Comparar dos sesiones")
+        st.subheader("Comparar dos análisis guardados")
         sessions = store.list_sessions()
         if len(sessions) < 2:
-            st.caption("Guardá al menos dos sesiones para comparar.")
+            st.caption("Guardá al menos dos análisis para compararlos.")
         else:
             labels = {f"{s['name']} ({s['id']})": s["id"] for s in sessions}
-            a = st.selectbox("Sesión A", list(labels), key="cmp_a")
-            b = st.selectbox("Sesión B", [x for x in labels if x != a] or list(labels), key="cmp_b")
-            if st.button("Comparar sesiones"):
+            a = st.selectbox("Análisis A", list(labels), key="cmp_a")
+            b = st.selectbox("Análisis B", [x for x in labels if x != a] or list(labels), key="cmp_b")
+            if st.button("Comparar análisis"):
                 la = store.load(labels[a])
                 lb = store.load(labels[b])
                 titles_a = {f["title"] for f in la["findings"]}
                 titles_b = {f["title"] for f in lb["findings"]}
-                st.write(f"Comunes: {len(titles_a & titles_b)} | Solo A: {len(titles_a - titles_b)} | Solo B: {len(titles_b - titles_a)}")
+                st.write(
+                    f"Comunes: {len(titles_a & titles_b)} | "
+                    f"Solo A: {len(titles_a - titles_b)} | "
+                    f"Solo B: {len(titles_b - titles_a)}"
+                )
 
 
 if __name__ == "__main__":
