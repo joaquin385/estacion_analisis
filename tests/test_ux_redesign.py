@@ -108,7 +108,6 @@ def test_business_kpis(commercial_pack):
     assert kpis[0]["value"] == "3.060"
     assert kpis[1]["value"].startswith("$")
     assert "11" in kpis[2]["delta"]
-    assert "revisados" in kpis[2]["delta"]
 
 
 def test_finding_copy_uses_engine_numbers(commercial_pack):
@@ -118,7 +117,8 @@ def test_finding_copy_uses_engine_numbers(commercial_pack):
     h = humanize_finding(region, ctx)
     assert "52" in h["title_simple"]
     assert "Norte" in h["title_simple"]
-    assert "pedido promedio de Norte" in h["what"]
+    assert "pedido promedio del Norte" in h["what"]
+    assert "de Norte" not in h["what"]
     assert "'" not in h["what"]
     assert "concentra" in h["what"]
     assert "4 de cada 10 pedidos" in h["what"]
@@ -133,6 +133,7 @@ def test_finding_copy_uses_engine_numbers(commercial_pack):
     assert "regiones" not in ho["why"].lower()
     assert "canals" not in ho["why"]
     assert "canales" in ho["why"]
+    assert "Online" in ho["what"]
     assert any("canal" in a.lower() or "envío" in a.lower() or "descuento" in a.lower() for a in ho["do"])
     assert "más de la mitad" in ho["what"]
 
@@ -147,6 +148,11 @@ def test_finding_copy_uses_engine_numbers(commercial_pack):
     assert "272" in hr["what"] and "424" in hr["what"]
     assert "ticket alto entre" not in hr["why"].lower()
     assert "no prueba" in hr["why"].lower() or "ojo" in hr["why"].lower()
+
+    anom = next(f for f in ordered if f.category.value == "anomaly")
+    ha = humanize_finding(anom, ctx)
+    assert "49" in ha["title_simple"]
+    assert "49" in ha["what"]
 
 
 def test_weighted_rest_average(commercial_pack):
@@ -198,6 +204,7 @@ def test_demo_labels_spanish():
 
 def test_report_new_copy_and_count(commercial_pack):
     from estacion.reports.generator import generate_markdown_report
+    from estacion.ux.presentation import build_plain_summary, plain_finding_line, suggested_next_steps
 
     _, findings, profile, artifacts, ctx = commercial_pack
     md = generate_markdown_report(profile, findings, artifacts, ctx=ctx)
@@ -208,10 +215,47 @@ def test_report_new_copy_and_count(commercial_pack):
     assert "12 hallazgos" not in md
     assert "Matriz Spearman" not in md
     assert "2,0 %" in md
+    assert "2.0%" not in md
     assert "covariables" not in md.lower()
     assert "residuales" not in md.lower()
     assert "outliers o ties" not in md.lower()
     assert "Outliers" not in md
+    assert "FDR controla" not in md
+    assert "Relación / Crítico" not in md
+    assert "customer_size" not in md.split("## Hallazgos")[0]
+    assert "marketing_spend" not in "\n".join(md.splitlines()[:40])
+    for b in build_plain_summary(findings, profile, artifacts, ctx=ctx):
+        assert "customer_size" not in b
+        assert "marketing_spend" not in b
+        assert "'revenue'" not in b
+        assert "discount" not in b
+    for f in dedupe_findings(findings)[:5]:
+        line = plain_finding_line(f, ctx)
+        assert "customer_size" not in line
+    for s in suggested_next_steps(findings, ctx):
+        assert "'Norte'" not in s
+        assert "Norte" in s or "repetid" in s.lower() or "ticket" in s.lower() or "PDF" in s
+
+
+def test_chart_money_labels_and_axis(commercial_pack):
+    from estacion.viz.charts import group_means_bar, relationship_means_line
+
+    _, findings, _, _, _ = commercial_pack
+    region = next(f for f in dedupe_findings(findings) if "region" in (f.title or ""))
+    means = region.evidence["group_means"]
+    fig = group_means_bar(means, highlight="Norte", value_prefix="$")
+    texts = list(fig.data[0].text)
+    assert all("," not in t.split("$")[-1] for t in texts)  # sin centavos
+    assert any(t == "$430" or t.endswith("430") for t in texts)
+    y_top = max(fig.layout.yaxis.range or [0, 0])
+    assert y_top >= 430
+    assert "Norte" in list(fig.data[0].x)
+
+    binned = {"1": 272.0, "2": 308.0, "3": 352.0, "4": 361.0, "5": 424.0}
+    line = relationship_means_line(binned, value_prefix="$")
+    assert list(line.data[0].x)[0] == "1"
+    assert line.layout.xaxis.type == "category"
+    assert all("," not in t.split("$")[-1] for t in line.data[0].text)
 
 
 def test_theme_inter_configured():
@@ -220,7 +264,9 @@ def test_theme_inter_configured():
     assert "fontFaces" in cfg
     css = (ROOT / "app" / "streamlit_app.py").read_text(encoding="utf-8")
     assert "font-family: Inter" in css
-    assert "ea-kpi-cap" in css
+    assert "stIconMaterial" in css
+    assert "Material Symbols" in css
+    assert "stHeader" in css
     assert "Descargar PDF" in css or "Descargar PDF" in (ROOT / "app" / "streamlit_app.py").read_text(
         encoding="utf-8"
     )

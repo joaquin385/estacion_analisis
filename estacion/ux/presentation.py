@@ -545,10 +545,17 @@ def format_magnitude(mag: Any, finding: Finding | None = None) -> str:
         gap = group_vs_rest_gap(finding)
         if gap and gap.get("pct") is not None:
             return f"~{abs(gap['pct']):.0f} % vs el resto"
-    m = re.match(r"^([0-9.eE+-]+)\s*%?\s*(duplicadas|faltantes|anomalías|extremos.*)?$", s, re.I)
-    if m and re.search(r"%", s):
-        # ya viene tipo "2.0% duplicadas"
-        return s.replace("%", " %")
+    m = re.match(
+        r"^([0-9.]+)\s*%\s*(duplicadas|faltantes|anomalías|extremos.*)?$",
+        s,
+        re.I,
+    )
+    if m:
+        pct_v = float(m.group(1))
+        if pct_v > 1:
+            pct_v = pct_v / 100.0
+        suffix = f" {m.group(2)}" if m.group(2) else ""
+        return f"{format_pct(pct_v, digits=1)}{suffix}"
 
     # float crudo
     try:
@@ -622,7 +629,7 @@ def evidence_pairs_plain(ev: dict[str, Any] | None, max_items: int = 6) -> list[
         out.append(
             (
                 "medias por grupo",
-                " · ".join(f"{k}: {format_number(v)}" for k, v in items),
+                " · ".join(f"{_pretty_group(k)}: {format_number(v, digits=0)}" for k, v in items),
             )
         )
     for k, v in ev.items():
@@ -633,6 +640,8 @@ def evidence_pairs_plain(ev: dict[str, Any] | None, max_items: int = 6) -> list[
             out.append((label, format_pct(float(v), digits=1)))
         elif k == "pct" and isinstance(v, (int, float)) and float(v) > 1:
             out.append((label, f"{format_number(v, 0)} %"))
+        elif k in {"var_a", "var_b", "column"} and isinstance(v, str):
+            out.append((label, friendly_column(v)))
         elif isinstance(v, float):
             out.append((label, format_number(v, digits=4 if abs(v) < 1 else 2)))
         else:
@@ -805,6 +814,14 @@ def _pretty_group(name: str) -> str:
     return s[:1].upper() + s[1:]
 
 
+def _de_group(name: str) -> str:
+    """'del Norte' / 'de Online' según artículo."""
+    pretty = _pretty_group(name)
+    if pretty.lower() in {"norte", "sur", "este", "oeste"}:
+        return f"del {pretty}"
+    return f"de {pretty}"
+
+
 _GROUP_PLURAL_ES = {
     "channel": "canales",
     "canal": "canales",
@@ -930,23 +947,24 @@ def _plain_bullet_for_finding(f: Finding, ctx: CopyContext | None = None) -> str
     if f.category == FindingCategory.RELATIONSHIP:
         a = ev.get("var_a") or (f.variables[0] if f.variables else "X")
         b = ev.get("var_b") or (f.variables[1] if len(f.variables) > 1 else "Y")
+        a_l, b_l = friendly_column(str(a), ctx), friendly_column(str(b), ctx)
         r = ev.get("spearman_r")
         if r is None:
             r = ev.get("pearson_r")
         confirmed = relationship_confirmed(f)
         if not confirmed:
             if ev.get("nonlinear_hint"):
-                return f"Posible relación no lineal entre '{a}' y '{b}' (no confirmada)"
-            return f"Posible relación entre '{a}' y '{b}' (no confirmada)"
+                return f"Posible relación no lineal entre {a_l} y {b_l} (no confirmada)"
+            return f"Posible relación entre {a_l} y {b_l} (no confirmada)"
         if ev.get("nonlinear_hint") and abs(float(r or 0)) < 0.15:
             return (
-                f"Entre '{a}' y '{b}' hay una relación que no es una línea simple "
+                f"Entre {a_l} y {b_l} hay una relación que no es una línea simple "
                 "(vale mirar el gráfico en Explorar)"
             )
         strength = _strength_word(float(r) if r is not None else None)
         if r is not None and float(r) < 0:
-            return f"Cuando sube '{a}', tiende a bajar '{b}' (relación {strength})"
-        return f"Cuando sube '{a}', tiende a subir '{b}' (relación {strength})"
+            return f"Cuando sube {a_l}, tiende a bajar {b_l} (relación {strength})"
+        return f"Cuando sube {a_l}, tiende a subir {b_l} (relación {strength})"
 
     if f.category == FindingCategory.STATISTICAL:
         phrase = _group_vs_rest_phrase(f, ctx)
@@ -958,17 +976,18 @@ def _plain_bullet_for_finding(f: Finding, ctx: CopyContext | None = None) -> str
         if "duplicate_pct" in ev or "duplic" in (f.title or "").lower() or ev.get("rule") == "max_duplicate_pct":
             n, pct = _duplicate_n_pct(f, ctx)
             if n is not None and pct is not None:
-                return f"{int(n)} filas están repetidas ({format_pct(float(pct))})"
+                return f"{format_int_es(n)} filas están repetidas ({format_pct(float(pct))})"
             if pct is not None:
                 return f"Hay filas repetidas ({format_pct(float(pct))})"
             return "Hay filas repetidas en la planilla"
         if "missing_pct" in ev or "faltant" in (f.title or "").lower():
             col = ev.get("column") or (f.variables[0] if f.variables else "una columna")
+            col_l = friendly_column(str(col), ctx)
             pct = float(ev.get("missing_pct") or 0)
             if pct >= 0.15:
                 every = max(2, int(round(1 / pct))) if pct > 0 else 0
-                return f"A '{col}' le falta el dato en 1 de cada {every} filas"
-            return f"A '{col}' le faltan datos ({format_pct(pct)})"
+                return f"A {col_l} le falta el dato en 1 de cada {every} filas"
+            return f"A {col_l} le faltan datos ({format_pct(pct)})"
         return None
 
     if f.category == FindingCategory.ANOMALY:
@@ -978,12 +997,13 @@ def _plain_bullet_for_finding(f: Finding, ctx: CopyContext | None = None) -> str
             pct_txt = f" ({format_pct(float(pct) / 100 if float(pct) > 1 else float(pct))})" if pct is not None else ""
             if pct is not None and float(pct) > 1:
                 pct_txt = f" ({format_number(pct, 0)} %)"
-            return f"{int(n)} filas están fuera de lo común{pct_txt}"
+            return f"{format_int_es(int(n))} filas están fuera de lo común{pct_txt}"
         return "Hay filas fuera de lo común"
 
     if f.category == FindingCategory.DISTRIBUTION:
         var = f.variables[0] if f.variables else "una variable"
-        return f"'{var}' tiene muchos valores extremos (cola larga); es frecuente en montos"
+        var_l = friendly_column(str(var), ctx)
+        return f"{var_l.capitalize()} tiene muchos valores extremos (cola larga); es frecuente en montos"
 
     if f.category == FindingCategory.SEGMENT:
         return "No aparecen grupos naturales claros entre las filas"
@@ -1089,7 +1109,7 @@ def _human_what(f: Finding, ctx: CopyContext | None = None) -> str:
             others_txt = ", ".join(others) if others else "el resto"
             if looks_like_money_column(var):
                 body = (
-                    f"Un pedido promedio de {name} deja {top}; "
+                    f"Un pedido promedio {_de_group(raw_name)} deja {top}; "
                     f"en {others_txt} ronda {rest}."
                 )
             else:
@@ -1460,16 +1480,14 @@ def _simplify_title(f: Finding, ctx: CopyContext | None = None) -> str:
         a = ev.get("var_a") or (vars_[0] if vars_ else None)
         b = ev.get("var_b") or (vars_[1] if len(vars_) > 1 else None)
         if a and b:
+            a_l, b_l = friendly_column(str(a), ctx), friendly_column(str(b), ctx)
             if not relationship_confirmed(f):
-                return f"Posible relación (no confirmada): '{a}' y '{b}'"
+                return f"Posible relación (no confirmada): {a_l} y {b_l}"
             if str(a) == "customer_size" and str(b).lower() in {"revenue", "facturacion", "facturación", "ventas"}:
                 return "Los clientes más grandes gastan más por pedido"
             if looks_like_money_column(str(b)):
-                return (
-                    f"Cuando sube {friendly_column(str(a), ctx)}, "
-                    f"también sube {friendly_column(str(b), ctx)}"
-                )
-            return f"'{a}' y '{b}' se mueven juntos"
+                return f"Cuando sube {a_l}, también sube {b_l}"
+            return f"{a_l} y {b_l} se mueven juntos"
 
     if "max_duplicate_pct" in t or ev.get("rule") == "max_duplicate_pct" or t.startswith("Filas duplicadas"):
         n, pct = _duplicate_n_pct(f, ctx)
@@ -1491,7 +1509,7 @@ def _simplify_title(f: Finding, ctx: CopyContext | None = None) -> str:
 
     if t.startswith("Distribución muy asimétrica"):
         var = f.variables[0] if f.variables else "variable"
-        return f"La variable '{var}' tiene muchos valores extremos / cola larga"
+        return f"{friendly_column(str(var), ctx).capitalize()} tiene muchos valores extremos / cola larga"
     if "faltantes elevados" in t or "Valores faltantes" in t:
         var = ev.get("column") or (f.variables[0] if f.variables else "una columna")
         pct = float(ev.get("missing_pct") or 0)
@@ -1503,13 +1521,17 @@ def _simplify_title(f: Finding, ctx: CopyContext | None = None) -> str:
         var = f.variables[0] if f.variables else "variable"
         return f"Hay valores atípicos en '{var}'"
     if t.startswith("Anomalías"):
+        n = ev.get("n_anomalies")
+        if n is not None:
+            return f"{format_int_es(int(n))} filas fuera de lo común"
         return "Hay filas fuera de lo común"
     if t.startswith("Correlación:"):
         vars_ = f.variables or []
         if len(vars_) >= 2:
+            a_l, b_l = friendly_column(str(vars_[0]), ctx), friendly_column(str(vars_[1]), ctx)
             if not relationship_confirmed(f):
-                return f"Posible relación (no confirmada): '{vars_[0]}' y '{vars_[1]}'"
-            return f"'{vars_[0]}' y '{vars_[1]}' se mueven juntos"
+                return f"Posible relación (no confirmada): {a_l} y {b_l}"
+            return f"{a_l} y {b_l} se mueven juntos"
         return "Hay una relación entre dos columnas"
     if "cambia el nivel" in t:
         return t
@@ -1518,9 +1540,10 @@ def _simplify_title(f: Finding, ctx: CopyContext | None = None) -> str:
     if t.startswith("Posible relación no lineal"):
         vars_ = f.variables or []
         if len(vars_) >= 2:
+            a_l, b_l = friendly_column(str(vars_[0]), ctx), friendly_column(str(vars_[1]), ctx)
             if not relationship_confirmed(f):
-                return f"Posible relación (no confirmada): '{vars_[0]}' y '{vars_[1]}'"
-            return f"Relación no lineal posible entre '{vars_[0]}' y '{vars_[1]}'"
+                return f"Posible relación (no confirmada): {a_l} y {b_l}"
+            return f"Relación no lineal posible entre {a_l} y {b_l}"
     return t
 
 
@@ -1581,10 +1604,10 @@ def build_summary_headline(
         gap = group_vs_rest_gap(top)
         shares = _group_share_phrases(top, gap["top_name"]) if gap else []
         if gap and any("mitad de la facturación" in s for s in shares):
-            headline = f"{label}: el {gap['top_name']} explica la mitad de lo que facturás"
+            headline = f"{label}: el {_pretty_group(gap['top_name'])} explica la mitad de lo que facturás"
         elif gap and gap.get("pct") is not None:
             headline = (
-                f"{label}: '{gap['top_name']}' rinde ~{abs(gap['pct']):.0f} % "
+                f"{label}: {_pretty_group(gap['top_name'])} rinde ~{abs(gap['pct']):.0f} % "
                 f"{'más' if gap['pct'] >= 0 else 'menos'} que el resto"
             )
         else:
@@ -1637,7 +1660,8 @@ def build_business_kpis(
         or (f.practically_important is True)
     )
     unit = ctx.money_unit or "unidades"
-    row_label = "Pedidos analizados" if profile.name.lower() in {"commercial", "ventas"} else "Filas analizadas"
+    # Labels cortos para que en 390 px no se truncen
+    row_label = "Pedidos" if profile.name.lower() in {"commercial", "ventas"} else "Filas"
 
     mean_txt, median_txt = "—", ""
     target = None
@@ -1670,22 +1694,23 @@ def build_business_kpis(
         {
             "label": row_label,
             "value": format_int_es(profile.n_rows),
-            "delta": f"{format_int_es(profile.n_cols)} columnas",
+            "delta": f"{format_int_es(profile.n_cols)} cols.",
         },
         {
-            "label": "Ticket promedio" if target and looks_like_money_column(target) else "Promedio clave",
+            "label": "Ticket medio" if target and looks_like_money_column(target) else "Promedio",
             "value": mean_txt,
-            "delta": median_txt,
+            "delta": median_txt.replace("mediana ", "med. ") if median_txt else median_txt,
         },
         {
-            "label": "Hallazgos fuertes",
+            "label": "Hallazgos",
             "value": format_int_es(n_strong),
-            "delta": f"de {format_int_es(len(ordered))} revisados",
+            "delta": f"de {format_int_es(len(ordered))}",
         },
         {
-            "label": "Problemas de datos",
+            "label": "Problemas",
             "value": format_int_es(len(problems)),
-            "delta": touch or "sin alertas graves",
+            "delta": (touch.replace("tocan ", "").replace(" filas", "") if touch else "")
+            or "sin alertas",
         },
     ]
 
@@ -1719,7 +1744,7 @@ def suggested_next_steps(
         if f.category == FindingCategory.STATISTICAL:
             gap = group_vs_rest_gap(f)
             if gap:
-                steps.append(f"Investigá qué hace distinto a '{gap['top_name']}'.")
+                steps.append(f"Investigá qué hace distinto a {_pretty_group(gap['top_name'])}.")
                 continue
         if f.category == FindingCategory.RELATIONSHIP and relationship_confirmed(f):
             steps.append("Priorizá el tramo donde el ticket es más alto.")
@@ -1778,8 +1803,10 @@ def discoveries_for_summary(findings: list[Finding]) -> list[Finding]:
 
 
 def _plain_limitation_text(text: str) -> str:
-    """Limpia jerga típica del motor en limitaciones / alternativas."""
+    """Limpia jerga típica del motor en limitaciones / alternativas. '' = omitir."""
     t = _strip_jargon(str(text or ""))
+    if re.search(r"FDR\s+controla", t, flags=re.I):
+        return ""
     t = re.sub(r"outliers?\s*o\s*ties", "valores extremos o empates", t, flags=re.I)
     t = re.sub(r"\boutliers?\b", "valores extremos", t, flags=re.I)
     t = re.sub(r"\bties\b", "empates", t, flags=re.I)
@@ -1787,19 +1814,39 @@ def _plain_limitation_text(text: str) -> str:
     t = re.sub(r"\bcovariables?\b", "otras variables", t, flags=re.I)
     t = re.sub(r"\bresiduales\b", "restos del ajuste", t, flags=re.I)
     t = re.sub(r"\bcontamination\b", "umbral de rareza", t, flags=re.I)
-    return t
+    return t.strip()
 
 
 def plain_alts_and_followups(f: Finding) -> tuple[list[str], list[str]]:
     """Alternativas y follow-ups sin jerga para informes."""
-    cleaned_alts = [_plain_limitation_text(a) for a in format_bullet_list(f.alternative_explanations)]
-    follows = [_plain_limitation_text(a) for a in format_bullet_list(f.follow_up)]
+    cleaned_alts = [
+        t for a in format_bullet_list(f.alternative_explanations) if (t := _plain_limitation_text(a))
+    ]
+    follows = [t for a in format_bullet_list(f.follow_up) if (t := _plain_limitation_text(a))]
     return cleaned_alts, follows
 
 
 def plain_limitations(f: Finding) -> list[str]:
     """Limitaciones del hallazgo sin jerga."""
-    return [_plain_limitation_text(a) for a in format_bullet_list(f.limitations)]
+    return [t for a in format_bullet_list(f.limitations) if (t := _plain_limitation_text(a))]
+
+
+def humanize_quality_issue(note: str, ctx: CopyContext | None = None) -> str:
+    """Reescribe avisos crudos del perfil (p.ej. '60 (2.0%)') a es-AR amigable."""
+    s = str(note or "").strip()
+    m = re.search(r"Filas duplicadas:\s*(\d+)\s*\(([0-9.]+)\s*%?\)", s, flags=re.I)
+    if m:
+        n = int(m.group(1))
+        pct = float(m.group(2))
+        if pct > 1:
+            pct = pct / 100.0
+        return f"Filas duplicadas: {format_int_es(n)} ({format_pct(pct, digits=1)})"
+    # nombres crudos de columna → amigables
+    for raw, _ in list(COLUMN_FRIENDLY_ES.items()):
+        if raw in s:
+            s = s.replace(raw, friendly_column(raw, ctx))
+    s = re.sub(r"\(([0-9]+)\.([0-9]+)%\)", lambda m: f"({m.group(1)},{m.group(2)} %)", s)
+    return s
 
 
 def counted_findings_n(findings: list[Finding]) -> int:
@@ -1857,11 +1904,12 @@ def build_plain_summary(
     if miss_vars and len(bullets) < max_bullets:
         top = sorted(miss_vars, key=lambda v: -v.missing_pct)[0]
         pct = top.missing_pct
+        col_l = friendly_column(str(top.name), ctx)
         if pct >= 0.15:
             every = max(2, int(round(1 / pct)))
-            bullets.append(f"A '{top.name}' le falta el dato en 1 de cada {every} filas")
+            bullets.append(f"A {col_l} le falta el dato en 1 de cada {every} filas")
         else:
-            bullets.append(f"A '{top.name}' le faltan datos ({format_pct(pct)})")
+            bullets.append(f"A {col_l} le faltan datos ({format_pct(pct)})")
 
     problems = [f for f in ordered if finding_track(f) == "problemas"]
     for f in problems:

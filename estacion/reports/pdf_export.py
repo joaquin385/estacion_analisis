@@ -71,8 +71,6 @@ def generate_pdf_report(
     artifacts = artifacts or {}
 
     from estacion.ux.presentation import (
-        CATEGORY_LABELS_ES,
-        SEVERITY_LABELS_ES,
         bool_es,
         build_plain_summary,
         build_summary_headline,
@@ -209,13 +207,10 @@ def generate_pdf_report(
                 mag = format_magnitude(f.magnitude, finding=f)
             obs = h["what"]
             ev_lines = [f"- {k}: {v}" for k, v in evidence_pairs_plain(f.evidence)]
-            cat = CATEGORY_LABELS_ES.get(f.category.value, f.category.value)
-            sev = SEVERITY_LABELS_ES.get(f.severity.value, f.severity.value)
             method_txt = method_plain_es(f.method)
             alts, follows = plain_alts_and_followups(f)
             text = [
                 title,
-                f"Categoría: {cat} | Severidad: {sev} | Score: {f.score:.0f}",
                 f"Magnitud: {mag}",
                 f"Método: {method_txt}",
                 "",

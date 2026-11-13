@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -14,27 +16,52 @@ COLOR_SECONDARY = "#C7D2FE"
 COLORWAY = ["#4F46E5", "#818CF8", "#C7D2FE", "#A5B4FC", "#6366F1", "#4338CA"]
 
 
-def _es_tick(v) -> str:
-    """Formato es-AR para ticks/etiquetas (1.500 / 0,45)."""
+def _es_tick(v, *, whole: bool = False) -> str:
+    """Formato es-AR para ticks/etiquetas (1.500 / 0,45). whole=True redondea a entero."""
     try:
         from estacion.ux.presentation import format_int_es, format_number
 
         fv = float(v)
-        if abs(fv - round(fv)) < 1e-9:
+        if whole or abs(fv - round(fv)) < 1e-9 or abs(fv) >= 20:
             return format_int_es(int(round(fv)))
         return format_number(fv, digits=2)
     except Exception:
         return str(v)
 
 
-def _set_es_axis_ticks(fig, axis: str = "y") -> None:
-    """Fuerza ticktext es-AR (punto de miles) en un eje numérico."""
+def _money_label(v, prefix: str = "") -> str:
+    """Etiqueta de monto/entero sin centavos: '$430'."""
+    num = _es_tick(v, whole=True)
+    return f"{prefix}{num}" if prefix else num
+
+
+def _pretty_axis_name(name: str) -> str:
+    s = str(name or "").strip()
+    if not s:
+        return s
+    return s[:1].upper() + s[1:]
+
+
+def _nice_step(span: float, target_ticks: int = 4) -> float:
+    if span <= 0:
+        return 1.0
+    raw = span / max(1, target_ticks)
+    if raw < 1:
+        return max(0.5, raw)
+    mag = 10 ** math.floor(math.log10(raw))
+    for m in (1, 2, 2.5, 5, 10):
+        step = m * mag
+        if step >= raw * 0.8:
+            return step
+    return 10 * mag
+
+
+def _set_es_axis_ticks(fig, axis: str = "y", *, hi_hint: float | None = None) -> None:
+    """Fuerza ticktext es-AR; el eje llega al menos hasta hi_hint / max de datos."""
     try:
         from estacion.ux.presentation import format_int_es
 
-        ax = fig.layout.yaxis if axis == "y" else fig.layout.xaxis
-        # Tomar rango de datos
-        vals = []
+        vals: list[float] = []
         for tr in fig.data:
             arr = getattr(tr, "y" if axis == "y" else "x", None)
             if arr is None:
@@ -44,28 +71,50 @@ def _set_es_axis_ticks(fig, axis: str = "y") -> None:
                     vals.append(float(v))
                 except Exception:
                     pass
+        if hi_hint is not None:
+            vals.append(float(hi_hint))
         if not vals:
+            # Histogramas / agregaciones: usar formato SI + separators del layout
+            if axis == "y":
+                fig.update_yaxes(tickformat=",d")
+            else:
+                fig.update_xaxes(tickformat=",d")
             return
-        lo, hi = min(vals), max(vals)
+        hi = max(vals)
+        lo = 0.0 if axis == "y" and min(vals) >= 0 else min(vals)
         if hi <= lo:
-            return
-        # ~5 ticks enteros
-        span = hi - lo
-        step = max(1.0, round(span / 4 / 100) * 100) if span >= 200 else max(1.0, span / 4)
-        ticks = []
-        t = 0.0
-        while t <= hi * 1.05:
-            ticks.append(t)
+            hi = lo + 1
+        # Cabezal con aire para etiquetas fuera de barra
+        top = hi * 1.18 if axis == "y" else hi
+        step = _nice_step(top - lo)
+        ticks: list[float] = []
+        t = 0.0 if lo >= 0 else math.floor(lo / step) * step
+        while t <= top + step * 0.01:
+            ticks.append(round(t, 10))
             t += step
-            if len(ticks) > 8:
+            if len(ticks) > 10:
                 break
         if not ticks:
             return
+        # Asegurar que el último tick cubra el máximo de datos
+        if ticks[-1] < hi:
+            ticks.append(math.ceil(hi / step) * step)
         texts = [format_int_es(int(round(x))) for x in ticks]
         if axis == "y":
-            fig.update_yaxes(tickmode="array", tickvals=ticks, ticktext=texts, tickformat=None)
+            fig.update_yaxes(
+                tickmode="array",
+                tickvals=ticks,
+                ticktext=texts,
+                tickformat=None,
+                range=[lo, max(ticks[-1], hi * 1.12)],
+            )
         else:
-            fig.update_xaxes(tickmode="array", tickvals=ticks, ticktext=texts, tickformat=None)
+            fig.update_xaxes(
+                tickmode="array",
+                tickvals=ticks,
+                ticktext=texts,
+                tickformat=None,
+            )
     except Exception:
         pass
 
@@ -78,6 +127,9 @@ def apply_chart_theme(
     y_title: str | None = None,
     height: int | None = 280,
     es_y_ticks: bool = True,
+    es_x_ticks: bool = False,
+    y_hi: float | None = None,
+    margin: dict | None = None,
 ):
     """Aplica tipografía Inter, márgenes y formato es-AR."""
     fig.update_layout(
@@ -92,11 +144,11 @@ def apply_chart_theme(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="#F8FAFC",
         colorway=COLORWAY,
-        margin=dict(l=48, r=16, t=48, b=40),
+        margin=margin or dict(l=52, r=20, t=52, b=44),
         height=height,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        # decimal=coma, miles=punto (es-AR)
         separators=",.",
+        uirevision=True,
     )
     fig.update_xaxes(
         title_text=x_title if x_title is not None else (fig.layout.xaxis.title.text if fig.layout.xaxis.title else None),
@@ -104,6 +156,7 @@ def apply_chart_theme(
         zeroline=False,
         tickfont=dict(color="#64748B", size=12, family="Inter, Segoe UI, sans-serif"),
         title_font=dict(color="#64748B", size=12, family="Inter, Segoe UI, sans-serif"),
+        automargin=True,
     )
     fig.update_yaxes(
         title_text=y_title if y_title is not None else (fig.layout.yaxis.title.text if fig.layout.yaxis.title else None),
@@ -111,9 +164,11 @@ def apply_chart_theme(
         zeroline=False,
         tickfont=dict(color="#64748B", size=12, family="Inter, Segoe UI, sans-serif"),
         title_font=dict(color="#64748B", size=12, family="Inter, Segoe UI, sans-serif"),
+        automargin=True,
     )
     if es_y_ticks:
-        _set_es_axis_ticks(fig, "y")
+        _set_es_axis_ticks(fig, "y", hi_hint=y_hi)
+    if es_x_ticks:
         _set_es_axis_ticks(fig, "x")
     return fig
 
@@ -121,13 +176,33 @@ def apply_chart_theme(
 def histogram(df: pd.DataFrame, column: str, color: str | None = None, *, label: str | None = None):
     lab = label or column
     fig = px.histogram(
-        df, x=column, color=color, marginal="box", nbins=40,
-        template=TEMPLATE, color_discrete_sequence=COLORWAY,
+        df,
+        x=column,
+        color=color,
+        marginal="box",
+        nbins=40,
+        template=TEMPLATE,
+        color_discrete_sequence=COLORWAY,
         title=f"Distribución de {lab}",
-        labels={column: lab, "count": "Cantidad"},
+        labels={column: lab},
     )
-    fig.update_layout(bargap=0.05)
-    return apply_chart_theme(fig, y_title="Cantidad", x_title=lab)
+    fig.update_layout(bargap=0.05, showlegend=False)
+    themed = apply_chart_theme(
+        fig,
+        y_title="Cantidad",
+        x_title=lab,
+        es_y_ticks=True,
+        es_x_ticks=True,
+        margin=dict(l=56, r=16, t=52, b=44),
+    )
+    # Eje principal: Cantidad una sola vez; el marginal (box) sin título
+    themed.update_yaxes(title_text="Cantidad", tickformat=",d", row=1, col=1)
+    try:
+        themed.update_yaxes(title_text="", row=2, col=1)
+        themed.layout.yaxis2.title.text = ""
+    except Exception:
+        pass
+    return themed
 
 
 def boxplot(df: pd.DataFrame, value: str, group: str | None = None, *, value_label: str | None = None, group_label: str | None = None):
@@ -166,7 +241,7 @@ def scatter(
     except Exception:
         kwargs.pop("trendline", None)
         fig = px.scatter(**kwargs)
-    return apply_chart_theme(fig, x_title=xl, y_title=yl, height=360)
+    return apply_chart_theme(fig, x_title=xl, y_title=yl, height=360, es_x_ticks=True)
 
 
 def correlation_heatmap(corr: pd.DataFrame, title: str = "Mapa de relaciones", labels: dict | None = None):
@@ -179,7 +254,6 @@ def correlation_heatmap(corr: pd.DataFrame, title: str = "Mapa de relaciones", l
         zmin=-1, zmax=1,
         template=TEMPLATE, title=title,
     )
-    # text_auto usa punto; reescribir a coma en hover
     fig.update_traces(texttemplate="%{z:.2f}", hovertemplate="%{x} · %{y}: %{z:.2f}<extra></extra>")
     return apply_chart_theme(fig, height=420, es_y_ticks=False)
 
@@ -234,7 +308,7 @@ def anomaly_overview(df: pd.DataFrame, score_col: str, flag_col: str):
         df, x=score_col, color=flag_col,
         template=TEMPLATE, color_discrete_sequence=COLORWAY,
         title="Distribución de puntajes de anomalía",
-        labels={score_col: "Puntaje", flag_col: "Anomalía", "count": "Cantidad"},
+        labels={score_col: "Puntaje", flag_col: "Anomalía"},
     )
     return apply_chart_theme(fig, y_title="Cantidad", x_title="Puntaje")
 
@@ -250,15 +324,17 @@ def group_means_bar(
     height: int = 220,
 ):
     """Barras con el grupo protagonista en índigo y el resto en lila claro."""
-    items = [(str(k), float(v)) for k, v in means.items()]
+    items = [(_pretty_axis_name(k), float(v), str(k)) for k, v in means.items()]
     if not items:
         return go.Figure()
-    if highlight is None:
-        highlight = max(items, key=lambda kv: kv[1])[0]
-    names = [k for k, _ in items]
-    vals = [v for _, v in items]
-    colors = [COLOR_PRIMARY if k == highlight else COLOR_SECONDARY for k in names]
-    texts = [f"{value_prefix}{_es_tick(v)}" if value_prefix else _es_tick(v) for v in vals]
+    hi_raw = highlight
+    if hi_raw is None:
+        hi_raw = max(means.items(), key=lambda kv: float(kv[1]))[0]
+    hi_pretty = _pretty_axis_name(hi_raw)
+    names = [p for p, _, _ in items]
+    vals = [v for _, v, _ in items]
+    colors = [COLOR_PRIMARY if p == hi_pretty or r == str(hi_raw) else COLOR_SECONDARY for p, _, r in items]
+    texts = [_money_label(v, value_prefix) for v in vals]
     fig = go.Figure(
         data=[
             go.Bar(
@@ -273,7 +349,17 @@ def group_means_bar(
         ]
     )
     fig.update_layout(showlegend=False, bargap=0.35)
-    return apply_chart_theme(fig, title=title, x_title=x_title, y_title=y_title, height=height)
+    return apply_chart_theme(
+        fig,
+        title=title,
+        x_title=x_title,
+        y_title=y_title,
+        height=height,
+        es_y_ticks=True,
+        es_x_ticks=False,
+        y_hi=max(vals) if vals else None,
+        margin=dict(l=56, r=16, t=64, b=44),
+    )
 
 
 def relationship_means_line(
@@ -291,7 +377,8 @@ def relationship_means_line(
         return go.Figure()
     names = [k for k, _ in items]
     vals = [v for _, v in items]
-    texts = [f"{value_prefix}{_es_tick(v)}" if value_prefix else _es_tick(v) for v in vals]
+    texts = [_money_label(v, value_prefix) for v in vals]
+    # Eje X categórico (1..5), sin tick 0 numérico
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -304,11 +391,28 @@ def relationship_means_line(
             fillcolor="rgba(79,70,229,0.10)",
             text=texts,
             textposition="top center",
+            cliponaxis=False,
             hovertemplate="%{x}: %{text}<extra></extra>",
         )
     )
     fig.update_layout(showlegend=False)
-    return apply_chart_theme(fig, title=title, x_title=x_title, y_title=y_title, height=height)
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=names,
+        range=[-0.35, len(names) - 0.65],
+    )
+    return apply_chart_theme(
+        fig,
+        title=title,
+        x_title=x_title,
+        y_title=y_title,
+        height=height,
+        es_y_ticks=True,
+        es_x_ticks=False,
+        y_hi=max(vals) if vals else None,
+        margin=dict(l=56, r=28, t=64, b=48),
+    )
 
 
 def _sort_key(k: str):

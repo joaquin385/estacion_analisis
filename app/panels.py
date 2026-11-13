@@ -375,7 +375,7 @@ def _mini_chart_for_finding(f: Finding, ctx: CopyContext | None = None):
             x_title="Grupo",
             highlight=gap["top_name"] if gap else None,
             value_prefix=_unit_prefix(ctx, var),
-            height=210,
+            height=260,
         )
     # Relación: línea por niveles (maqueta A)
     if f.category == FindingCategory.RELATIONSHIP and ctx and ctx.df is not None:
@@ -390,7 +390,7 @@ def _mini_chart_for_finding(f: Finding, ctx: CopyContext | None = None):
                     y_title="Promedio",
                     x_title=friendly_column(str(a), ctx),
                     value_prefix=_unit_prefix(ctx, str(b)),
-                    height=210,
+                    height=260,
                 )
     return None
 
@@ -541,14 +541,19 @@ def render_summary_header(
     st.markdown(f'<h2 class="ea-headline">{headline}</h2>', unsafe_allow_html=True)
     st.markdown(f'<p class="ea-subhead">{sub}</p>', unsafe_allow_html=True)
     kpis = build_business_kpis(findings, profile, df, ctx)
-    # 2×2: en móvil no queda 1 por fila; en desktop también queda compacto
+    # 2×2; delta dentro de la card (gris vía CSS, sin flecha)
     r1 = st.columns(2)
     r2 = st.columns(2)
     for col, kpi in zip(list(r1) + list(r2), kpis):
         with col:
-            st.metric(kpi["label"], kpi["value"], border=True)
-            if kpi.get("delta"):
-                st.markdown(f'<p class="ea-kpi-cap">{kpi["delta"]}</p>', unsafe_allow_html=True)
+            st.metric(
+                kpi["label"],
+                kpi["value"],
+                delta=kpi.get("delta") or None,
+                delta_color="off",
+                delta_arrow="off",
+                border=True,
+            )
 
 
 def render_plain_summary(findings, profile, artifacts, ctx: CopyContext | None = None) -> None:

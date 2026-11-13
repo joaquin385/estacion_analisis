@@ -111,17 +111,55 @@ st.set_page_config(
 CUSTOM_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-html, body, .stApp, .stApp *,
-[data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] *,
-[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
-button, input, textarea, label, p, span, div, li, h1, h2, h3, h4 {
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=block');
+/* Inter solo en texto — NUNCA en iconos Material Symbols */
+html, body, .stApp,
+[data-testid="stMarkdownContainer"],
+[data-testid="stWidgetLabel"],
+button, input, textarea, label, p, li, h1, h2, h3, h4,
+[data-testid="stMetricLabel"],
+[data-testid="stMetricValue"],
+[data-testid="stMetricDelta"] {
   font-family: Inter, "Segoe UI", sans-serif !important;
 }
-html, body, .stApp, [data-testid="stMarkdownContainer"], p, li, label {
+/* Restaurar ligaduras de iconos (Streamlit usa text content = nombre del glifo) */
+[data-testid="stIconMaterial"],
+span[data-testid="stIconMaterial"],
+.material-symbols-rounded,
+.material-symbols-outlined,
+.material-symbols-sharp,
+span[class*="material-symbols"],
+i.material-icons,
+button [data-testid="stIconMaterial"] {
+  font-family: "Material Symbols Rounded" !important;
+  font-style: normal !important;
+  font-weight: 400 !important;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24 !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+  speak: never;
+  -webkit-font-feature-settings: "liga" !important;
+  font-feature-settings: "liga" !important;
+}
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stWidgetLabel"],
+label {
   font-size: 15.5px !important;
   line-height: 1.5;
 }
 .stApp { background: #F6F8FB; color: #0F172A; }
+/* Una sola marca: ocultar header nativo de Streamlit */
+header[data-testid="stHeader"] { display: none !important; }
+/* Evitar que el toggle colapsado filtre el nombre del glifo como texto */
+[data-testid="stSidebarCollapsedControl"] {
+  width: 2.25rem !important;
+  overflow: hidden !important;
+}
+[data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"] {
+  font-size: 1.35rem !important;
+  line-height: 1 !important;
+}
 h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 700 !important; }
 .brand {
   font-size: 1.15rem !important;
@@ -168,9 +206,6 @@ h1, h2, h3 { color: #0F172A !important; letter-spacing: -0.02em; font-weight: 70
   color: #64748B; font-weight: 600; margin: 0.4rem 0 0.6rem 0;
 }
 .ea-lbl { color: #94A3B8; font-size: 0.8rem !important; font-weight: 600; margin: 0.55rem 0 0.1rem 0; }
-.ea-kpi-cap {
-  color: #64748B !important; font-size: 0.8rem !important; margin: -0.35rem 0 0.6rem 0.15rem;
-}
 .ea-pill {
   display: inline-block; background: #EEF2FF; color: #4F46E5;
   font-size: 0.75rem !important; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 999px;
@@ -195,15 +230,54 @@ div[data-testid="stMetric"] {
   background: #fff; border: 1px solid #E5E9F0; border-radius: 16px;
   padding: 0.85rem 1rem;
 }
-/* Neutralizar deltas verdes residuales */
-div[data-testid="stMetricDelta"] { color: #64748B !important; }
+/* Números KPI grandes (no heredar 15.5px del body) */
+div[data-testid="stMetricValue"],
+div[data-testid="stMetricValue"] * {
+  font-size: 2.05rem !important;
+  font-weight: 700 !important;
+  line-height: 1.15 !important;
+  color: #0F172A !important;
+}
+div[data-testid="stMetricLabel"] p,
+div[data-testid="stMetricLabel"] {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  line-height: 1.25 !important;
+  font-size: 0.82rem !important;
+}
+/* Caption dentro de la card: delta gris, sin flecha, sin truncar */
+div[data-testid="stMetricDelta"] {
+  color: #64748B !important;
+  font-size: 0.8rem !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  max-width: 100% !important;
+}
+div[data-testid="stMetricDelta"] p,
+div[data-testid="stMetricDelta"] span {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+}
+div[data-testid="stMetricDelta"] svg { display: none !important; }
+div[data-testid="stMetricDelta"] [data-testid="stMetricDeltaIcon-Up"],
+div[data-testid="stMetricDelta"] [data-testid="stMetricDeltaIcon-Down"] {
+  display: none !important;
+}
 @media (max-width: 768px) {
-  div[data-testid="stMetric"] label { font-size: 0.75rem !important; }
-  div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.15rem !important; }
+  div[data-testid="stMetricLabel"] p,
+  div[data-testid="stMetricLabel"] {
+    font-size: 0.72rem !important;
+    white-space: normal !important;
+  }
+  div[data-testid="stMetricValue"],
+  div[data-testid="stMetricValue"] * { font-size: 1.45rem !important; }
   .brand { font-size: 1.05rem !important; }
   .ea-hero-title { font-size: 1.55rem !important; }
   .ea-headline { font-size: 1.35rem !important; }
-  /* KPIs 2×2 en 390px: no apilar una métrica por fila */
+  /* KPIs 2×2 en 390px */
   div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) {
     flex-wrap: nowrap !important;
     flex-direction: row !important;
@@ -214,7 +288,6 @@ div[data-testid="stMetricDelta"] { color: #64748B !important; }
     flex: 1 1 50% !important;
     width: 50% !important;
   }
-  .ea-kpi-cap { font-size: 0.72rem !important; }
 }
 </style>
 """
@@ -728,9 +801,6 @@ def main():
     meta = (st.session_state.get("load_metas") or load_metas or {}).get(selected) or {}
     from_upload = st.session_state.get("load_source") == "upload"
     bad_parse = bool(meta.get("suspicious_parse") and meta.get("n_cols") == 1)
-    # Marca visible mientras aún no hay análisis listo (preview / Analizar)
-    if not _analysis_ready(selected, quality_domain):
-        _render_topbar(show_actions=False)
 
     def _on_clear_upload() -> None:
         st.session_state["_reset_uploads"] = True
@@ -741,6 +811,9 @@ def main():
     run_analyze_now = bool(
         run_btn or auto_once or st.session_state.pop("_run_analyze", False)
     )
+    # Una sola marca: no duplicar topbar si este run va a analizar / ya está listo
+    if not _analysis_ready(selected, quality_domain) and not run_analyze_now:
+        _render_topbar(show_actions=False)
     show_analyze_prompt = not _analysis_ready(selected, quality_domain) and not run_analyze_now
     # Evitar tabla duplicada: expander (mensajes) + preview bajo Analizar.
     preview_table_in_expander = not (from_upload and show_analyze_prompt and not bad_parse)

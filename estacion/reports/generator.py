@@ -29,8 +29,6 @@ def generate_markdown_report(
     lines: list[str] = []
 
     from estacion.ux.presentation import (
-        CATEGORY_LABELS_ES,
-        SEVERITY_LABELS_ES,
         bool_es,
         build_plain_summary,
         build_summary_headline,
@@ -43,6 +41,7 @@ def generate_markdown_report(
         friendly_column,
         friendly_dataset_name,
         humanize_finding,
+        humanize_quality_issue,
         method_plain_es,
         plain_alts_and_followups,
         plain_finding_line,
@@ -114,10 +113,18 @@ def generate_markdown_report(
         for g in profile.granularity_notes:
             lines.append(f"- {_humanize_granularity(g)}")
     if profile.quality_issues:
-        lines.append("")
-        lines.append("Problemas de calidad:")
+        # Evitar repetir "Filas duplicadas" si ya está arriba
+        qi = []
         for q in profile.quality_issues:
-            lines.append(f"- {q}")
+            hq = humanize_quality_issue(q, ctx)
+            if "duplicad" in hq.lower() and profile.duplicate_rows:
+                continue
+            qi.append(hq)
+        if qi:
+            lines.append("")
+            lines.append("Problemas de calidad:")
+            for q in qi:
+                lines.append(f"- {q}")
 
     lines.append("")
     lines.append("## Hallazgos con evidencia")
@@ -140,8 +147,6 @@ def generate_markdown_report(
             mag = format_magnitude(f.magnitude, finding=f)
         obs = h["what"]
         pairs = evidence_pairs_plain(f.evidence)
-        cat = CATEGORY_LABELS_ES.get(f.category.value, f.category.value)
-        sev = SEVERITY_LABELS_ES.get(f.severity.value, f.severity.value)
         lines.append(f"### {title}")
         lines.append("")
         lines.append(f"- **Qué se observó:** {obs}")
@@ -149,7 +154,6 @@ def generate_markdown_report(
         lines.append(f"- **Qué podés hacer:** {' · '.join(h['do'])}")
         lines.append(f"- **Magnitud:** {mag}")
         lines.append(f"- **Método:** {method_plain_es(f.method)}")
-        lines.append(f"- **Categoría / severidad:** {cat} / {sev}")
         if f.statistically_significant is not None:
             lines.append(f"- **Estadísticamente significativo:** {bool_es(f.statistically_significant)}")
         if f.practically_important is not None:
