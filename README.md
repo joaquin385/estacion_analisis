@@ -53,6 +53,7 @@ python experiments/validate_discovery.py
 ## Documentación
 
 - [Manual de uso](docs/MANUAL_DE_USO.md)
+- [Roadmap de análisis](docs/ROADMAP_ANALISIS.md) — qué hay hoy vs qué falta (7 preguntas + inflación AR)
 - [Informe de validación](docs/INFORME_DE_VALIDACION.md)
 - [Pendientes](docs/PENDIENTES.md)
 - [Informe UX](docs/estacion_ux/informe_ux.md)
